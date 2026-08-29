@@ -1,0 +1,29 @@
+# Nim build output and caches
+/build/
+/canary
+nimcache/
+.nimcache/
+
+# Local state databases and SQLite sidecar files
+*.db
+*.db-shm
+*.db-wal
+*.sqlite
+*.sqlite3
+
+# Temporary certificate material
+*.pem
+*.crt
+*.cer
+*.key
+*.csr
+*.p12
+*.pfx
+
+# Local scratch files
+*.tmp
+*.swp
+*~
+nimble.develop
+nimble.paths
+nimbledeps

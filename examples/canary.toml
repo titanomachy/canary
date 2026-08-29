@@ -1,0 +1,31 @@
+# Canary loads this file as defaults only. Targets stay on the command line.
+# Keep notification URLs and authorization headers in CANARY_* environment
+# variables or a separately protected, untracked file.
+
+retries = 2
+recoveryThreshold = 2
+json = false
+
+[http]
+timeout = 3000
+status = 200
+maxRedirects = 3
+
+[ssl]
+timeout = 5000
+minDays = 21
+port = 443
+
+[tcp]
+timeout = 3000
+
+[udp]
+timeout = 3000
+payload = "ping"
+
+[dns]
+expected = ""
+
+[icmp]
+timeout = 3000
+count = 1
