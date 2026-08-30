@@ -55,7 +55,7 @@ internal error.
 
 ## Elapsed-time contract
 
-All six check types measure elapsed duration with the monotonic
+All seven check types measure elapsed duration with the monotonic
 `getMonoTime()` clock rather than the epoch-based wall clock. The timer covers
 the complete check function through result classification. HTTP response time
 specifically covers the interval from starting the HTTP check through receiving
@@ -82,8 +82,9 @@ cannot distort elapsed measurements.
 
 Invalid timeouts, retry thresholds, ports, methods, hostnames, status codes,
 DNS expectations, header syntax, TLS thresholds, redirect counts, and ICMP
-packet counts are configuration errors. They are rejected before network or
-helper-process execution and exit with `2`.
+packet counts are configuration errors. Command executable/argv limits and
+expected exit codes are validated the same way. They are rejected before
+network or helper-process execution and exit with `2`.
 
 ## Sensitive targets and helper processes
 
@@ -97,6 +98,12 @@ On supported Linux systems, ICMP invokes `ping` and TLS invokes `openssl`
 directly with argument arrays. No target is interpreted by a shell. The TLS
 implementation uses separate `s_client` and `x509` invocations, passing the leaf
 certificate over stdin rather than through a shell pipeline.
+
+The `command` check likewise invokes the selected executable directly with one
+argv element per `--arg`. Its configured timeout bounds the complete process;
+the default expected exit code is `0`, and an optional literal output match is
+applied to combined stdout and stderr. Arguments, captured output, and match
+text are not included in public results.
 
 ## Notification and state failures
 

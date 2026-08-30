@@ -1,6 +1,7 @@
 import std/[json, os]
 import ../[canary_contract, common, notifier]
-import ../checks/[dnscheck, httpcheck, icmpcheck, sslcheck, tcpcheck, udpcheck]
+import ../checks/[commandcheck, dnscheck, httpcheck, icmpcheck, sslcheck,
+                  tcpcheck, udpcheck]
 import config
 
 proc executeCheck*(config: CanaryConfig): CheckResult =
@@ -55,6 +56,15 @@ proc executeCheck*(config: CanaryConfig): CheckResult =
   of ckIcmp:
     let icmp = config.icmpConfig
     checkIcmp(icmp.host, icmp.count, icmp.timeoutMs)
+  of ckCommand:
+    let command = config.commandConfig
+    checkCommand(
+      command.executable,
+      command.args,
+      command.timeoutMs,
+      command.expectedExitCode,
+      command.outputMatch
+    )
 
 proc stateTrackingRequested(common: CommonConfig): bool =
   ## Notifications need state to detect transitions; otherwise persistence is

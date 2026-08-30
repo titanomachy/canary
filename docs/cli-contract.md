@@ -10,7 +10,8 @@ behavior rather than the parser implementation.
 canary <command> <target> [options]
 ```
 
-The supported commands are `http`, `ssl`, `tcp`, `udp`, `dns`, and `icmp`.
+The supported commands are `http`, `ssl`, `tcp`, `udp`, `dns`, `icmp`, and
+`command`.
 Options may follow the positional target, as shown throughout the README.
 Documented short options and both `--option value` and `--option=value` forms
 are part of the interface. Boolean options such as `--json` do not require a
@@ -50,6 +51,23 @@ sent verbatim after connecting. An expectation requires a matching response
 substring; without a request it matches server-first banners. `--timeout`
 bounds the complete connect, send, and receive sequence. Omitting both values
 retains the established connect-only behavior.
+
+The local command shape is:
+
+```text
+canary command <executable> [--arg VALUE]... [--timeout MILLISECONDS]
+  [--exitCode CODE] [--outputMatch TEXT]
+```
+
+Each repeatable `--arg` becomes exactly one argv element; Canary never invokes
+a shell. Exit code `0` is expected by default, and `--exitCode` accepts `0`
+through `255`. A non-empty `--outputMatch` requires a case-sensitive literal
+substring in combined stdout and stderr. Timeout bounds the complete process
+run and takes precedence over exit/output assertions. A timeout or assertion
+failure is a completed `DOWN` check; failure to start the executable is invalid
+configuration. Result output never contains argv values, captured process
+output, or the configured match. The generated state ID uses only the
+executable; use `--id` for distinct probes of one program.
 
 The HTTP command accepts `-v`/`--verbose`; `--timing` is an equivalent alias.
 This opt-in mode adds transport phases to human output and a `timings_ms` object

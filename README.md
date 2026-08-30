@@ -23,7 +23,8 @@ Many monitoring solutions are heavy background daemons bundling their own schedu
                                     ▼
                         ┌───────────────────────┐
                         │        canary         │
-                        │(HTTP/SSL/TCP/UDP/DNS) │
+                        │ HTTP/SSL/TCP/UDP/DNS  │
+                        │ ICMP/local commands  │
                         └───────────┬───────────┘
                                     │
              ┌──────────────────────┴──────────────────────┐
@@ -107,6 +108,8 @@ result has been received and classified:
   optional response match. DNS includes the hosts-file or resolver query,
   possible UDP-to-TCP fallback, and answer processing. ICMP includes the
   complete `ping` helper-process run and exit classification.
+- Command checks include starting the local executable, waiting for it to exit,
+  and classifying its exit code and optional combined stdout/stderr match.
 
 On some systems a monotonic clock does not count time spent in system suspend.
 For normal uptime checks while the system is active, `getMonoTime()` is still
@@ -365,6 +368,39 @@ in that response.
 
 ---
 
+### 7. Local Command Checks (`canary command`)
+
+Run a local executable directly and assert its exit code and, optionally, a
+literal substring in its combined stdout and stderr. No shell is started:
+every `--arg` value is passed as one unchanged argument and the option is
+repeatable.
+
+```bash
+# Exit code 0 is expected by default
+./canary command /usr/local/bin/check-disk --timeout 2000
+
+# Pass two arguments and require both a nonzero exit code and output text
+./canary command /usr/bin/systemctl \
+  --arg is-active --arg my-service \
+  --exitCode 3 --outputMatch inactive --timeout 3000
+```
+
+| Option | Type | Default | Description |
+| :--- | :--- | :--- | :--- |
+| `executable` | `string` | *required* | Executable name or path (*positional argument*) |
+| `--arg=` | repeatable string | none | One literal argument; repeat to preserve argv boundaries |
+| `-t=, --timeout=` | `int` | `5000` | Maximum total runtime in milliseconds |
+| `--exitCode=` | `int` | `0` | Expected process exit code from `0` through `255` |
+| `--outputMatch=` | `string` | `""` | Required literal substring in combined stdout/stderr; empty disables |
+
+A timeout is always `DOWN`, even if its termination status equals the expected
+exit code. A missing or unstartable executable is a configuration error. Raw
+command output, arguments, and the configured match are not copied into result,
+state, or notification messages. Use `--id` when checks of the same executable
+with different arguments or assertions need independent state.
+
+---
+
 ## IPv6
 
 Every network check supports IPv6 literals. HTTP and HTTPS URLs use standard
@@ -407,8 +443,9 @@ for embedded state persistence.
 
 Without `--id`, state IDs use a public form of URL targets: userinfo, query
 parameters, and fragments are removed before persistence. Checks that differ
-only in query values or expectations therefore share generated state. Give each
-such check a stable `--id` to keep their state independent:
+only in query values or expectations therefore share generated state. Local
+command IDs similarly omit arguments and assertions because these can contain
+credentials. Give each such check a stable `--id` to keep its state independent:
 
 ```bash
 ./canary http https://api.example.test/health --status 200 --id api-status
@@ -530,14 +567,15 @@ security contract.
 
 Canary validates timeouts, retry thresholds, ports, HTTP status codes and
 methods, hostnames, DNS expectations, redirects, header syntax, TLS thresholds,
-and ICMP packet counts before opening a network connection. Invalid input exits
-with code `2`; a valid check that reaches an unavailable service exits with code
-`1`.
+ICMP packet counts, and local-command exit/output limits before starting a
+check. Invalid input exits with code `2`; a valid check that reaches an
+unavailable service or fails an assertion exits with code `1`.
 
-ICMP and TLS helper processes receive an executable and an argument array
-directly. No target is evaluated by a shell, and the temporary OpenSSL-based TLS
-implementation uses two sequential invocations rather than a pipeline. See the
-[security contract](docs/security.md) for the complete boundary.
+ICMP, TLS, and local command checks receive an executable and an argument array
+directly. No target or command argument is evaluated by a shell, and the
+temporary OpenSSL-based TLS implementation uses two sequential invocations
+rather than a pipeline. See the [security contract](docs/security.md) for the
+complete boundary.
 
 ### Supported Notification Protocols:
 

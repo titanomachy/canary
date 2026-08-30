@@ -27,7 +27,7 @@ canary/cli.nim  -- builds -->  CanaryConfig
 - `src/canary/cli.nim` is the thin `nim-confutils` adapter. It resolves built-in,
   TOML, environment, and CLI values, converts them into the typed model, and
   contains no check implementation.
-- `src/canary/config.nim` defines `CanaryConfig`, `CommonConfig`, and the six
+- `src/canary/config.nim` defines `CanaryConfig`, `CommonConfig`, and the seven
   command-specific configurations. Validation operates on this model and does
   not depend on a parser.
 - `src/canary/app.nim` validates and executes a configuration, formats the
@@ -61,6 +61,10 @@ canary http https://api.example.test/health --search ready --id api-readiness
 ```
 
 Those commands maintain independent state even when they share a database.
+The same applies to command checks: generated IDs intentionally omit argv and
+output assertions because they can contain secrets, so distinct probes of one
+executable should have explicit IDs.
+
 IDs are opaque, case-sensitive strings of at most 128 characters. They may not
 have surrounding whitespace or contain control characters. Choose a stable ID:
 changing it starts a new state history.

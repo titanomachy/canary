@@ -3,7 +3,7 @@ import std/[httpcore, json, monotimes, net, options, os, strutils, unittest]
 import ../../src/[common, input_contract, network_target, notifier,
                     process_runner]
 import ../../src/canary/[app, cli, config]
-import ../../src/checks/[dnscheck, httpcheck, icmpcheck, sslcheck]
+import ../../src/checks/[commandcheck, dnscheck, httpcheck, icmpcheck, sslcheck]
 import ../test_support
 
 proc readState(dbPath: string, jobId: string): tuple[status: string,
@@ -350,6 +350,14 @@ suite "typed application configuration":
         kind: ckIcmp,
         common: commonOptions,
         icmpConfig: IcmpConfig(host: "127.0.0.1", count: 1, timeoutMs: 100)
+      ),
+      CanaryConfig(
+        kind: ckCommand,
+        common: commonOptions,
+        commandConfig: CommandConfig(
+          executable: "/usr/bin/true", timeoutMs: 100,
+          expectedExitCode: 0
+        )
       )
     ]
     for checkConfig in configurations:
@@ -527,6 +535,35 @@ suite "layered CLI configuration":
     check parsed.dnsConfig.resolver == "127.0.0.1:5353"
     check parsed.dnsConfig.timeoutMs == 750
 
+  test "command options and TOML defaults map to the typed model":
+    let testDir = newTestDir("command-config")
+    defer: removeDir(testDir)
+    let configPath = testDir / "canary.toml"
+    writeFile(configPath,
+      "[command]\n" &
+      "arg = [\"from-config\"]\n" &
+      "timeout = 900\n" &
+      "exitCode = 7\n" &
+      "outputMatch = \"ready\"\n")
+
+    let fromToml = loadCliConfig(@[
+      "command", "/usr/bin/printf", "--config", configPath
+    ]).toCanaryConfig()
+    check fromToml.commandConfig.args == @["from-config"]
+    check fromToml.commandConfig.timeoutMs == 900
+    check fromToml.commandConfig.expectedExitCode == 7
+    check fromToml.commandConfig.outputMatch == "ready"
+
+    let fromCli = loadCliConfig(@[
+      "command", "/usr/bin/printf", "--config", configPath,
+      "--arg", "%s", "--arg", "cli value", "--timeout", "250",
+      "--exitCode", "0", "--outputMatch", "cli"
+    ]).toCanaryConfig()
+    check fromCli.commandConfig.args == @["%s", "cli value"]
+    check fromCli.commandConfig.timeoutMs == 250
+    check fromCli.commandConfig.expectedExitCode == 0
+    check fromCli.commandConfig.outputMatch == "cli"
+
   test "DNS arrays and defaults load from TOML":
     let testDir = newTestDir("dns-config")
     defer: removeDir(testDir)
@@ -572,6 +609,69 @@ suite "layered CLI configuration":
     ]
 
 suite "argument-safe system checks":
+  test "command check passes every argument literally without a shell":
+    let shellSyntax = "value; touch must-not-exist | echo injected"
+    var called = false
+    let runner: ProcessRunner = proc(command: string, args: seq[string],
+                                     input: string,
+                                     timeoutMs: int): ProcessResult =
+      called = true
+      check command == "/usr/bin/printf"
+      check args == @["%s", shellSyntax]
+      check input.len == 0
+      check timeoutMs == 750
+      ProcessResult(output: shellSyntax, exitCode: 7)
+    let result = checkCommand(
+      "/usr/bin/printf", @["%s", shellSyntax], 750, 7, "touch", runner
+    )
+    check called
+    check result.isOk
+    check shellSyntax notin result.message
+    check shellSyntax notin result.details
+
+  test "command check classifies exit, output, and timeout failures":
+    let wrongExit: ProcessRunner = proc(command: string, args: seq[string],
+                                        input: string,
+                                        timeoutMs: int): ProcessResult =
+      ProcessResult(output: "ready", exitCode: 3)
+    let exitResult = checkCommand("fixture", @[], 100, 0, "ready", wrongExit)
+    check not exitResult.isOk
+    check "Unexpected exit code" in exitResult.details
+
+    let wrongOutput: ProcessRunner = proc(command: string, args: seq[string],
+                                          input: string,
+                                          timeoutMs: int): ProcessResult =
+      ProcessResult(output: "not healthy", exitCode: 0)
+    let outputResult = checkCommand(
+      "fixture", @[], 100, 0, "private expected text", wrongOutput
+    )
+    check not outputResult.isOk
+    check "private expected text" notin outputResult.message
+    check "private expected text" notin outputResult.details
+
+    let timeout: ProcessRunner = proc(command: string, args: seq[string],
+                                      input: string,
+                                      timeoutMs: int): ProcessResult =
+      ProcessResult(exitCode: 137, timedOut: true)
+    let timeoutResult = checkCommand("fixture", @[], 100, 137, "", timeout)
+    check not timeoutResult.isOk
+    check timeoutResult.details == "Timeout"
+
+  test "command check validates exit codes and values before execution":
+    var called = false
+    let runner: ProcessRunner = proc(command: string, args: seq[string],
+                                     input: string,
+                                     timeoutMs: int): ProcessResult =
+      called = true
+      ProcessResult(exitCode: 0)
+    expect CanaryConfigError:
+      discard checkCommand("fixture", @[], 100, 256, "", runner)
+    expect CanaryConfigError:
+      discard checkCommand("", @[], 100, 0, "", runner)
+    expect CanaryConfigError:
+      discard checkCommand("fixture\nspoofed", @[], 100, 0, "", runner)
+    check not called
+
   test "the default process runner treats shell syntax as a literal argument":
     let shellSyntax = "value; echo should-not-run | touch nowhere"
     let execution = runProcess(

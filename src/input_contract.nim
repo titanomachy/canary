@@ -7,6 +7,8 @@ const
   MaxHttpStatus = 599
   MaxIcmpPacketCount* = 100
   MaxTcpProbeBytes* = 65_536
+  MaxCommandArguments* = 1024
+  MaxCommandValueBytes* = 65_536
 
 proc configError(message: string) {.noreturn.} =
   raise newException(CanaryConfigError, message)
@@ -44,6 +46,38 @@ proc validateTcpProbe*(request, expected: string) =
   if expected.len > MaxTcpProbeBytes:
     configError(
       "TCP expected response must not exceed " & $MaxTcpProbeBytes & " bytes"
+    )
+
+proc validateCommand*(executable: string, args: openArray[string],
+                      timeoutMs, expectedExitCode: int,
+                      outputMatch: string) =
+  ## Command checks pass these values directly to exec/argv. NUL bytes cannot
+  ## be represented by the platform process API and are rejected explicitly.
+  validateCommon(timeoutMs, 1)
+  if executable.len == 0 or executable.len > MaxCommandValueBytes:
+    configError(
+      "command executable must be between 1 and " &
+        $MaxCommandValueBytes & " bytes"
+    )
+  for character in executable:
+    if ord(character) < 32 or ord(character) == 127:
+      configError("command executable cannot contain control characters")
+  if args.len > MaxCommandArguments:
+    configError(
+      "command cannot have more than " & $MaxCommandArguments & " arguments"
+    )
+  for argument in args:
+    if argument.len > MaxCommandValueBytes or '\0' in argument:
+      configError(
+        "command arguments cannot exceed " & $MaxCommandValueBytes &
+          " bytes or contain NUL bytes"
+      )
+  if expectedExitCode < 0 or expectedExitCode > 255:
+    configError("exitCode must be between 0 and 255")
+  if outputMatch.len > MaxCommandValueBytes or '\0' in outputMatch:
+    configError(
+      "outputMatch cannot exceed " & $MaxCommandValueBytes &
+        " bytes or contain NUL bytes"
     )
 
 proc validatePacketCount*(count: int) =

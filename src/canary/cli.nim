@@ -13,6 +13,7 @@ type
     udp = "Send a UDP datagram and require a response"
     dns = "Query A, AAAA, CNAME, MX, or TXT DNS records"
     icmp = "Check ICMP ping reachability"
+    command = "Run a local executable and assert its result"
 
   CommonCliConfig* = object
     checkId* {.
@@ -219,6 +220,31 @@ type
       defaultValue: 5000
       desc: "Maximum execution time in milliseconds" .}: int
 
+  CommandCliConfig* = object
+    executable* {.
+      argument
+      name: "executable"
+      defaultValue: ""
+      desc: "Local executable name or path" .}: string
+    args* {.
+      name: "arg"
+      defaultValue: @[]
+      envVarValueSep: "\n"
+      desc: "Argument passed verbatim (repeat for multiple arguments)" .}: seq[string]
+    timeoutMs* {.
+      name: "timeout"
+      abbr: "t"
+      defaultValue: 5000
+      desc: "Maximum execution time in milliseconds" .}: int
+    expectedExitCode* {.
+      name: "exitCode"
+      defaultValue: 0
+      desc: "Expected process exit code (0 through 255)" .}: int
+    outputMatch* {.
+      name: "outputMatch"
+      defaultValue: ""
+      desc: "Required literal substring in combined stdout and stderr" .}: string
+
   CliConfig* = object
     configFile* {.
       name: "config"
@@ -238,9 +264,11 @@ type
       dnsOptions* {.flatten.}: DnsCliConfig
     of CanaryCommand.icmp:
       icmpOptions* {.flatten.}: IcmpCliConfig
+    of CanaryCommand.command:
+      commandOptions* {.flatten.}: CommandCliConfig
 
 const
-  Commands = ["http", "ssl", "tcp", "udp", "dns", "icmp"]
+  Commands = ["http", "ssl", "tcp", "udp", "dns", "icmp", "command"]
   ValueOptions = [
     "--config", "--id", "--notify", "--db", "--retries", "-n", "-d",
     "-r", "--recoveryThreshold", "--cooldown", "--repeatInterval",
@@ -248,7 +276,8 @@ const
     "--body", "--maxRedirects", "--statusRange", "--maxLatency",
     "--responseHeader", "--regex", "--jsonField", "--minDays", "--port",
     "--request", "--payload", "--expected", "--type", "--resolver",
-    "--count", "-t", "-s", "-m", "-b", "-p"
+    "--count", "--arg", "--exitCode", "--outputMatch", "-t", "-s", "-m",
+    "-b", "-p"
   ]
   BooleanOptions = [
     "--json", "-j", "--verbose", "-v", "--timing", "--help", "--version"
@@ -256,7 +285,7 @@ const
   NumericOptions = [
     "--retries", "--recoveryThreshold", "--cooldown", "--repeatInterval",
     "--timeout", "--status", "--maxRedirects", "--maxLatency", "--minDays",
-    "--port", "--count", "-r", "-t", "-s", "-m", "-p"
+    "--port", "--count", "--exitCode", "-r", "-t", "-s", "-m", "-p"
   ]
 
 proc normalizedArguments(arguments: seq[string]): seq[string] =
@@ -445,6 +474,21 @@ proc toCanaryConfig*(input: CliConfig): CanaryConfig =
         timeoutMs: icmp.timeoutMs
       )
     )
+  of CanaryCommand.command:
+    let command = input.commandOptions
+    CanaryConfig(
+      kind: ckCommand,
+      common: common,
+      commandConfig: CommandConfig(
+        executable: requireTarget(
+          command.executable, "no command executable specified"
+        ),
+        args: command.args,
+        timeoutMs: command.timeoutMs,
+        expectedExitCode: command.expectedExitCode,
+        outputMatch: command.outputMatch
+      )
+    )
 
 proc runNotificationTest(arguments: seq[string]): int =
   if arguments.len == 1 or arguments == @["notify", "--help"] or
@@ -493,7 +537,7 @@ proc printTopLevelHelp() =
   stdout.writeLine("")
   stdout.writeLine("Usage: canary <command> [options]")
   stdout.writeLine("")
-  stdout.writeLine("Check commands: http, ssl, tcp, udp, dns, icmp")
+  stdout.writeLine("Check commands: http, ssl, tcp, udp, dns, icmp, command")
   stdout.writeLine("Notification command: notify test <provider>")
   stdout.writeLine("")
   stdout.writeLine(

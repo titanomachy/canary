@@ -16,7 +16,7 @@ on public websites, DNS records, or notification services.
 
 `tests/unit/test_unit.nim` covers header and Pushover parsing, HTTP-method
 mapping, input ranges, URL validation, human and JSON result formatting, typed
-configuration for all six check kinds, parser-independent check execution,
+configuration for all seven check kinds, parser-independent check execution,
 stable and explicit check IDs, layered TOML/environment/CLI precedence,
 environment-based secret inputs, and state transitions.
 Notifier state coverage also fixes the clock to verify cooldown catch-up,
@@ -32,9 +32,10 @@ DNS/TCP/TTFB/transfer phase output, the total HTTP response-time
 threshold and the bounded monotonic deadlines used by UDP, TCP, and DNS.
 
 The unit suite also verifies that shell metacharacters remain a literal process
-argument, helper-process timeouts are enforced, ICMP and OpenSSL receive exact
-argv arrays, invalid host fragments never reach a runner, TLS handshake failures
-become `DOWN`, and URL secrets are absent from formatted output and state IDs.
+argument, helper-process timeouts are enforced, local command/ICMP/OpenSSL
+checks receive exact argv arrays, command exit/output/timeout assertions are
+classified correctly, invalid input never reaches a runner, and sensitive
+command values and URL secrets are absent from formatted output and state IDs.
 
 Each state test creates its own temporary SQLite database. The state table
 exercises these paths:
@@ -82,4 +83,5 @@ independent explicit state IDs, and an IPv6 TCP result through the public JSON
 contract. It checks timing mode through the public nested JSON contract and
 also forces a webhook connection failure with userinfo, a secret path, and a
 query token, then verifies that stderr contains only the public notification
-host.
+host. Local command cases cover successful literal output matching, expected
+nonzero exits, assertion failures, timeouts, and missing executables.

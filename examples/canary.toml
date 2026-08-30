@@ -47,3 +47,9 @@ type = "A"
 [icmp]
 timeout = 3000
 count = 1
+
+[command]
+timeout = 3000
+exitCode = 0
+# arg = ["--mode", "health"]
+# outputMatch = "ready"

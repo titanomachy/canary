@@ -72,6 +72,12 @@ timeout = 3000
 type = "A"
 # resolver = "1.1.1.1"
 # expected = ["192.0.2.10", "192.0.2.11"]
+
+[command]
+timeout = 3000
+exitCode = 0
+# arg = ["--mode", "health"]
+# outputMatch = "ready"
 ```
 
 The common keys are `id`, `notify`, `db`, `retries`, `recoveryThreshold`,
@@ -92,6 +98,7 @@ command keys are:
 | `[udp]` | `port`, `payload`, `expected`, `timeout` |
 | `[dns]` | `type`, `expected`, `resolver`, `timeout` |
 | `[icmp]` | `count`, `timeout` |
+| `[command]` | `arg`, `timeout`, `exitCode`, `outputMatch` |
 
 The established HTTP key `maxLatency` is retained for compatibility. It limits
 the total HTTP response time defined in the
@@ -134,14 +141,25 @@ responses are limited to 65,536 bytes. With neither key, TCP remains a
 connect-only check. Use an explicit `id` when multiple probes against the same
 host and port need independent retry and notification state.
 
+For `command`, `arg` is an array whose elements become separate argv values;
+neither the executable nor its arguments pass through a shell. `exitCode`
+accepts `0` through `255` and defaults to `0`. A non-empty `outputMatch` is a
+case-sensitive literal substring assertion against combined stdout and stderr.
+The one `timeout` covers the complete child-process run, and a timeout always
+fails. Arguments, captured output, and match text stay out of public results,
+state IDs, and notification messages. The generated identity contains only the
+executable, so use an explicit `id` for different probes of the same program.
+
 ## Environment variables and secrets
 
 Environment names use the `CANARY_` prefix and the uppercased option name:
 `CANARY_RETRIES`, `CANARY_RECOVERYTHRESHOLD`, `CANARY_COOLDOWN`,
 `CANARY_REPEATINTERVAL`, `CANARY_SILENCEUNTIL`, `CANARY_DB`, `CANARY_TIMEOUT`,
 `CANARY_STATUS`, `CANARY_STATUSRANGE`, `CANARY_MAXLATENCY`, `CANARY_VERBOSE`, `CANARY_NOTIFY`,
-`CANARY_REQUEST`, `CANARY_EXPECTED`, `CANARY_TYPE`, `CANARY_RESOLVER`, and
-`CANARY_HEADERS`, for example. Camel-case
+`CANARY_REQUEST`, `CANARY_EXPECTED`, `CANARY_TYPE`, `CANARY_RESOLVER`,
+`CANARY_ARG`, `CANARY_EXITCODE`, `CANARY_OUTPUTMATCH`, and `CANARY_HEADERS`, for
+example. `CANARY_ARG` separates multiple command arguments with newlines.
+Camel-case
 option names do not gain an extra underscore: use `CANARY_MINDAYS` and
 `CANARY_MAXREDIRECTS`. The same rule gives `CANARY_REPEATINTERVAL` and
 `CANARY_SILENCEUNTIL`.

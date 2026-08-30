@@ -79,7 +79,9 @@ suite "Canary CLI compatibility contract":
     let result = runCanary(["--help"])
     result.describe()
     check result.exitCode == 0
-    for command in ["http", "ssl", "tcp", "udp", "dns", "icmp", "notify"]:
+    for command in [
+      "http", "ssl", "tcp", "udp", "dns", "icmp", "command", "notify"
+    ]:
       check result.stdout.contains(command)
     check result.stderr.len == 0
 
@@ -138,6 +140,16 @@ suite "Canary CLI compatibility contract":
     check result.exitCode == ExitUp
     for option in ["--request", "--expected", "--timeout"]:
       check option in result.stdout
+    check result.stderr.len == 0
+
+  test "command help describes argv, timeout, exit, and output assertions":
+    let result = runCanary(["command", "--help"])
+    result.describe()
+    check result.exitCode == ExitUp
+    for option in ["--arg", "--timeout", "--exitCode", "--outputMatch"]:
+      check option in result.stdout
+    check "combined stdout" in result.stdout
+    check "stderr" in result.stdout
     check result.stderr.len == 0
 
   test "version comes from the canonical contract":
@@ -321,7 +333,8 @@ suite "Canary CLI compatibility contract":
       @["dns", "example.test", "--resolver", "resolver.example.test"],
       @["dns", "example.test", "--timeout", "0"],
       @["icmp", "127.0.0.1", "--count", "0"],
-      @["icmp", "127.0.0.1", "--count", "101"]
+      @["icmp", "127.0.0.1", "--count", "101"],
+      @["command", "/usr/bin/true", "--exitCode", "256"]
     ]:
       let result = runCanary(args)
       result.describe()
@@ -365,6 +378,58 @@ suite "Canary CLI compatibility contract":
     check result.exitCode == ExitConfigError
     check result.stdout.len == 0
     check "hostname is invalid" in result.stderr
+
+  test "local command checks exit code and combined output":
+    let result = runCanary([
+      "command", "/usr/bin/printf", "--arg", "%s", "--arg", "ready",
+      "--outputMatch", "ready", "--timeout", "500", "--json"
+    ])
+    result.describe()
+    check result.exitCode == ExitUp
+    check result.stderr.len == 0
+    let payload = parseJson(result.stdout)
+    check payload["check"].getStr() == "command"
+    check payload["target"].getStr() == "/usr/bin/printf"
+    check payload["status"].getStr() == "UP"
+    check "expected output received" in payload["details"].getStr()
+
+  test "command accepts an expected nonzero exit code":
+    let result = runCanary([
+      "command", "/usr/bin/false", "--exitCode", "1", "--timeout", "500"
+    ])
+    result.describe()
+    check result.exitCode == ExitUp
+    check "COMMAND OK" in result.stdout
+    check result.stderr.len == 0
+
+  test "command assertion failures are DOWN without leaking match content":
+    let result = runCanary([
+      "command", "/usr/bin/printf", "--arg", "actual",
+      "--outputMatch", "private-expected-text", "--timeout", "500"
+    ])
+    result.describe()
+    check result.exitCode == ExitDown
+    check "Expected output not received" in result.stdout
+    check "private-expected-text" notin result.stdout
+    check "private-expected-text" notin result.stderr
+
+  test "command timeout is a bounded DOWN result":
+    let result = runCanary([
+      "command", "/usr/bin/sleep", "--arg", "1", "--timeout", "25"
+    ])
+    result.describe()
+    check result.exitCode == ExitDown
+    check "COMMAND TIMEOUT" in result.stdout
+    check result.stderr.len == 0
+
+  test "a missing command executable is a configuration error":
+    let result = runCanary([
+      "command", "/definitely/not/a/canary-executable", "--timeout", "100"
+    ])
+    result.describe()
+    check result.exitCode == ExitConfigError
+    check result.stdout.len == 0
+    check "could not be started" in result.stderr
 
   test "documented short option after target is accepted for an UP check":
     let (server, port) = listeningSocket()

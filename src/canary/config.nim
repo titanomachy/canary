@@ -8,7 +8,8 @@ type
     ckTcp,
     ckUdp,
     ckDns,
-    ckIcmp
+    ckIcmp,
+    ckCommand
 
   CommonConfig* = object
     ## Options shared by every check. The CLI is only one possible source for
@@ -71,6 +72,13 @@ type
     count*: int
     timeoutMs*: int
 
+  CommandConfig* = object
+    executable*: string
+    args*: seq[string]
+    timeoutMs*: int
+    expectedExitCode*: int
+    outputMatch*: string
+
   CanaryConfig* = object
     common*: CommonConfig
     case kind*: CheckKind
@@ -86,6 +94,8 @@ type
       dnsConfig*: DnsConfig
     of ckIcmp:
       icmpConfig*: IcmpConfig
+    of ckCommand:
+      commandConfig*: CommandConfig
 
 proc validateCheckId*(checkId: string) =
   ## Explicit IDs are persisted and included in notification messages, so keep
@@ -175,6 +185,12 @@ proc validate*(config: CanaryConfig) =
     validateCommon(icmp.timeoutMs, config.common.retries)
     validateHostname(icmp.host)
     validatePacketCount(icmp.count)
+  of ckCommand:
+    let command = config.commandConfig
+    validateCommand(
+      command.executable, command.args, command.timeoutMs,
+      command.expectedExitCode, command.outputMatch
+    )
 
 proc resolvedCheckId*(config: CanaryConfig): string =
   ## Prefer an operator-defined identity. Generated IDs preserve the 0.1 CLI
@@ -213,3 +229,7 @@ proc resolvedCheckId*(config: CanaryConfig): string =
       )
   of ckIcmp:
     makeCheckId("icmp", normalizedNetworkHost(config.icmpConfig.host))
+  of ckCommand:
+    # Arguments and assertions may contain credentials, so the generated ID
+    # deliberately contains only the executable. Use --id for distinct probes.
+    makeCheckId("command", config.commandConfig.executable)

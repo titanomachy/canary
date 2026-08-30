@@ -6,6 +6,13 @@ All notable changes to Canary are documented in this file.
 
 ### Added
 
+- A shellless `command` check for local executables, with repeatable literal
+  argv values, one total timeout, an expected exit code, and an optional
+  combined stdout/stderr substring assertion.
+- Typed TOML/environment/CLI configuration plus unit and black-box coverage for
+  command success, expected nonzero exits, output mismatch, timeout, validation,
+  missing executables, and sensitive-output containment.
+
 - Per-check notification cooldowns through `--cooldown`, with transactional
   catch-up alerts for outages that remain DOWN after the cooldown.
 - Periodic DOWN reminders through `--repeatInterval`; concurrent processes use
@@ -61,6 +68,10 @@ All notable changes to Canary are documented in this file.
 
 ### Changed
 
+- Generated command state identities contain only the executable; argv and
+  assertion text stay out of persistence and public diagnostics. Operators can
+  use `--id` to separate multiple probes of the same executable.
+
 - State rows now record notification timing, current-incident alert ownership,
   and the persisted silence end; existing 0.1 databases migrate in place
   without re-alerting already-DOWN legacy incidents.
@@ -101,6 +112,10 @@ All notable changes to Canary are documented in this file.
   `CURL_CA_BUNDLE` and `SSL_CERT_FILE`.
 
 ### Security
+
+- Local commands use direct executable-plus-argv process creation without a
+  shell. Arguments, captured stdout/stderr, and configured output matches are
+  not copied into results or notification messages.
 
 - Notification URLs and authorization headers can be supplied through
   `CANARY_NOTIFY` and `CANARY_HEADERS`, avoiding shared command-line arguments;
