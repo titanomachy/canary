@@ -35,6 +35,9 @@ canary/cli.nim  -- builds -->  CanaryConfig
   code. It never terminates the process itself.
 - `src/checks/` contains the check implementations. These functions return a
   `CheckResult` and do not print or terminate the process.
+- `src/checks/http_timing.nim` is the opt-in in-process libcurl boundary. It
+  performs the timed HTTP request, captures body and headers for the same
+  assertions, and converts libcurl's cumulative counters into separate phases.
 
 The adapter resolves configuration as built-in defaults, then TOML, then
 `CANARY_*` environment variables, then CLI options. It reads an explicit

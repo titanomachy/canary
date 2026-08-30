@@ -3,6 +3,17 @@ import std/[json, monotimes, os, strutils, times, uri]
 type
   CanaryConfigError* = object of ValueError
 
+  HttpPhaseTimings* = object
+    ## Independent HTTP transport phases in milliseconds. Values are present
+    ## only when the optional timing transport was requested.
+    available*: bool
+    dnsMs*: float
+    tcpConnectMs*: float
+    tlsHandshakeMs*: float
+    ttfbMs*: float
+    transferMs*: float
+    totalMs*: float
+
   CheckResult* = object
     kind*: string
     target*: string
@@ -10,6 +21,7 @@ type
     message*: string
     latencyMs*: int
     details*: string
+    httpTimings*: HttpPhaseTimings
 
 proc elapsedMilliseconds*(startTime: MonoTime): int =
   ## Measure elapsed check time independently of adjustments to the wall clock.
@@ -74,6 +86,15 @@ proc formatResult*(res: CheckResult, asJson: bool = false): string =
       # Keep latency_ms for compatibility while naming the complete HTTP
       # measurement precisely for new consumers.
       j["response_time_ms"] = %safe.latencyMs
+      if safe.httpTimings.available:
+        j["timings_ms"] = %*{
+          "dns": safe.httpTimings.dnsMs,
+          "tcp_connect": safe.httpTimings.tcpConnectMs,
+          "tls_handshake": safe.httpTimings.tlsHandshakeMs,
+          "ttfb": safe.httpTimings.ttfbMs,
+          "transfer": safe.httpTimings.transferMs,
+          "total": safe.httpTimings.totalMs
+        }
     result = $j
   else:
     result = safe.message

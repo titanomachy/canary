@@ -37,6 +37,14 @@ OpenSSL is a temporary runtime dependency for the TLS expiry check. Replacing it
 with a TLS-library implementation remains a future architectural improvement,
 not a prerequisite for the safe `0.1.x` process boundary.
 
+HTTP `--verbose`/`--timing` uses libcurl in process, not a helper executable.
+The target, headers, and request body are therefore never copied to a curl
+child-process command line. Certificate and hostname verification remain
+enabled. Private CA bundles can be selected with `CURL_CA_BUNDLE` or
+`SSL_CERT_FILE`; timing mode passes that path directly to libcurl. Raw libcurl
+errors are contained by the same public-error redaction boundary as the normal
+HTTP client.
+
 ## Redaction boundary
 
 The original HTTP URL is used only for the outgoing request. Before a target is

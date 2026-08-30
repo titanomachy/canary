@@ -32,7 +32,8 @@ The test layers are:
   helper-process arguments/timeouts, check IDs, and the complete SQLite
   state-transition table. Every state test owns a temporary database.
 - `integration/test_integration.nim`: local HTTP, TCP, UDP, DNS, TLS, and
-  webhook servers on random ports, IPv6 loopback coverage for every socket
+  webhook servers on random ports, HTTP phase timing (including a real local
+  TLS handshake), IPv6 loopback coverage for every socket
   transport, plus a multiprocess SQLite concurrency test.
 - `cli/test_cli.nim`: black-box coverage of the public behavior in
   `docs/cli-contract.md`, including config paths, precedence, typed errors, and

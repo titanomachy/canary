@@ -237,6 +237,34 @@ suite "result formatting and check IDs":
     let payload = parseJson(formatResult(httpResult, true))
     check payload["response_time_ms"].getInt() == 11
     check payload["latency_ms"].getInt() == 11
+    check not payload.hasKey("timings_ms")
+
+  test "HTTP JSON exposes requested phase timings as structured fields":
+    let httpResult = CheckResult(
+      kind: "http",
+      target: "https://example.test/health",
+      isOk: true,
+      message: "HTTP OK",
+      latencyMs: 13,
+      details: "Status: 200 OK",
+      httpTimings: HttpPhaseTimings(
+        available: true,
+        dnsMs: 1.125,
+        tcpConnectMs: 2.25,
+        tlsHandshakeMs: 3.5,
+        ttfbMs: 4.75,
+        transferMs: 0.625,
+        totalMs: 12.25
+      )
+    )
+    let payload = parseJson(formatResult(httpResult, true))
+    let timings = payload["timings_ms"]
+    check timings["dns"].getFloat() == 1.125
+    check timings["tcp_connect"].getFloat() == 2.25
+    check timings["tls_handshake"].getFloat() == 3.5
+    check timings["ttfb"].getFloat() == 4.75
+    check timings["transfer"].getFloat() == 0.625
+    check timings["total"].getFloat() == 12.25
 
   test "elapsed duration helper accepts a monotonic start time":
     let started = getMonoTime()
@@ -368,7 +396,8 @@ suite "layered CLI configuration":
   test "CLI overrides environment, which overrides TOML and built-ins":
     const EnvironmentKeys = [
       "CANARY_RETRIES", "CANARY_NOTIFY", "CANARY_HEADERS", "CANARY_STATUS",
-      "CANARY_TIMEOUT", "CANARY_JSON", "CANARY_RECOVERYTHRESHOLD"
+      "CANARY_TIMEOUT", "CANARY_JSON", "CANARY_RECOVERYTHRESHOLD",
+      "CANARY_VERBOSE"
     ]
     var savedEnvironment: seq[tuple[key: string, present: bool, value: string]]
     for key in EnvironmentKeys:
@@ -394,12 +423,14 @@ suite "layered CLI configuration":
       "recoveryThreshold = 2\n\n" &
       "[http]\n" &
       "status = 201\n" &
-      "timeout = 1200\n")
+      "timeout = 1200\n" &
+      "verbose = false\n")
 
     putEnv("CANARY_RETRIES", "3")
     putEnv("CANARY_RECOVERYTHRESHOLD", "3")
     putEnv("CANARY_NOTIFY", "https://env-secret.invalid/hook")
     putEnv("CANARY_HEADERS", "Authorization: Bearer env-secret")
+    putEnv("CANARY_VERBOSE", "true")
     let parsed = loadCliConfig(@[
       "http", "https://example.test/health", "--config", configPath,
       "--retries", "4", "--recoveryThreshold", "4", "--timeout", "1300"
@@ -413,6 +444,7 @@ suite "layered CLI configuration":
     check parsed.httpConfig.expectedStatus == 201
     check parsed.httpConfig.timeoutMs == 1300
     check parsed.httpConfig.maxRedirects == 5
+    check parsed.httpConfig.verboseTimings
 
   test "HTTP assertion options map to the parser-independent model":
     let parsed = loadCliConfig(@[
@@ -426,6 +458,16 @@ suite "layered CLI configuration":
     check parsed.httpConfig.responseHeader == "X-Health: ready"
     check parsed.httpConfig.bodyRegex == "ready|ok"
     check parsed.httpConfig.jsonField == "service.status=ready"
+
+  test "HTTP verbose timing mode and its timing alias map to the model":
+    let verbose = loadCliConfig(@[
+      "http", "https://example.test/health", "--verbose"
+    ]).toCanaryConfig()
+    let timingAlias = loadCliConfig(@[
+      "http", "https://example.test/health", "--timing"
+    ]).toCanaryConfig()
+    check verbose.httpConfig.verboseTimings
+    check timingAlias.httpConfig.verboseTimings
 
   test "TCP request and response options map to the typed model and TOML":
     let fromCli = loadCliConfig(@[

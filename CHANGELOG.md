@@ -42,6 +42,10 @@ All notable changes to Canary are documented in this file.
   IPv6 loopback coverage.
 - An explicit `response_time_ms` field for HTTP JSON results, alongside the
   retained `latency_ms` compatibility field.
+- Optional HTTP `--verbose`/`-v` timing mode (with `--timing` alias), reporting
+  separate DNS, TCP-connect, TLS-handshake, TTFB, transfer, and total phases.
+- A structured `timings_ms` JSON object for timed HTTP successes and failures,
+  plus deterministic local HTTP and HTTPS phase-timing coverage.
 
 ### Changed
 
@@ -73,6 +77,10 @@ All notable changes to Canary are documented in this file.
   duration now covers certificate inspection and parsing as well as handshake.
 - Human-readable HTTP output and documentation now call the full-operation
   measurement response time; `--maxLatency` applies to that total response time.
+- Timed HTTP requests use libcurl in process so all phase values belong to the
+  measured HTTP operation and existing response assertions still use its body
+  and headers. Libcurl is loaded only for timing mode; private CA paths honor
+  `CURL_CA_BUNDLE` and `SSL_CERT_FILE`.
 
 ### Security
 

@@ -71,6 +71,33 @@ proc serveHttp(mode: string, delayMs: int, ipv6: bool) =
                  "Connection: close\r\n\r\n" & body
   client.send(response)
 
+proc serveHttpRedirect(ipv6: bool) =
+  let server = fixtureSocket(ipv6)
+  defer: server.close()
+  server.setSockOpt(OptReuseAddr, true)
+  server.bindAddr(Port(0), fixtureHost(ipv6))
+  server.listen()
+  announce(server.getLocalAddr()[1])
+
+  var firstClient: owned(Socket)
+  server.accept(firstClient)
+  discard readHttpRequest(firstClient)
+  firstClient.send(
+    "HTTP/1.1 302 Found\r\nLocation: /final\r\nContent-Length: 0\r\n" &
+    "Connection: close\r\n\r\n"
+  )
+  firstClient.close()
+
+  var secondClient: owned(Socket)
+  server.accept(secondClient)
+  defer: secondClient.close()
+  discard readHttpRequest(secondClient)
+  let body = "fixture-ok"
+  secondClient.send(
+    "HTTP/1.1 200 OK\r\nContent-Type: text/plain\r\n" &
+    "Content-Length: " & $body.len & "\r\nConnection: close\r\n\r\n" & body
+  )
+
 proc serveUdp(response: string, ipv6: bool) =
   let server = fixtureSocket(ipv6, SOCK_DGRAM, IPPROTO_UDP)
   defer: server.close()
@@ -212,11 +239,35 @@ proc serveTls(certFile: string, keyFile: string, ipv6: bool) =
   server.accept(client)
   client.close()
 
+proc serveHttps(certFile: string, keyFile: string, ipv6: bool) =
+  let context = newContext(
+    verifyMode = CVerifyNone,
+    certFile = certFile,
+    keyFile = keyFile
+  )
+  let server = fixtureSocket(ipv6)
+  defer: server.close()
+  context.wrapSocket(server)
+  server.setSockOpt(OptReuseAddr, true)
+  server.bindAddr(Port(0), fixtureHost(ipv6))
+  server.listen()
+  announce(server.getLocalAddr()[1])
+
+  var client: owned(Socket)
+  server.accept(client)
+  defer: client.close()
+  discard readHttpRequest(client)
+  let body = "fixture-ok"
+  client.send(
+    "HTTP/1.1 200 OK\r\nContent-Type: text/plain\r\n" &
+    "Content-Length: " & $body.len & "\r\nConnection: close\r\n\r\n" & body
+  )
+
 proc usage() {.noreturn.} =
   stderr.writeLine(
     "usage: local_server <http-ok|http-json|http-missing|webhook-ok|" &
-    "webhook-fail|webhook-slow|tcp-banner|tcp-request|tcp-silent|" &
-    "udp-echo|dns|tls> [--delay-ms=N] [--response=TEXT] " &
+    "webhook-fail|webhook-slow|http-redirect|tcp-banner|tcp-request|tcp-silent|" &
+    "udp-echo|dns|tls|https-ok> [--delay-ms=N] [--response=TEXT] " &
     "[--expected-request=TEXT] [--cert=PATH] [--key=PATH] [--ipv6]"
   )
   quit(2)
@@ -256,6 +307,10 @@ when isMainModule:
     serveDns(delayMs, ipv6)
   elif mode == "tls" and certFile.len > 0 and keyFile.len > 0:
     serveTls(certFile, keyFile, ipv6)
+  elif mode == "https-ok" and certFile.len > 0 and keyFile.len > 0:
+    serveHttps(certFile, keyFile, ipv6)
+  elif mode == "http-redirect":
+    serveHttpRedirect(ipv6)
   elif mode in [
     "http-ok", "http-json", "http-missing", "webhook-ok", "webhook-fail",
     "webhook-slow"

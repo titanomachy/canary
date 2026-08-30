@@ -35,6 +35,43 @@ suite "local HTTP and UDP checks":
     check payload["latency_ms"].getInt() == result.latencyMs
     server.waitForSuccess()
 
+  test "HTTP verbose mode reports independent transport phases":
+    var server = startLocalServer("http-ok", ["--delay-ms=100"])
+    defer: server.stop()
+    let result = checkHttp(
+      "http://127.0.0.1:" & $server.port & "/health",
+      timeoutMs = 1000,
+      verboseTimings = true
+    )
+    check result.isOk
+    check result.httpTimings.available
+    check result.httpTimings.dnsMs >= 0.0
+    check result.httpTimings.tcpConnectMs >= 0.0
+    check result.httpTimings.tlsHandshakeMs == 0.0
+    check result.httpTimings.ttfbMs >= 50.0
+    check result.httpTimings.transferMs >= 0.0
+    check result.httpTimings.totalMs >= result.httpTimings.ttfbMs
+    check "Timings: DNS " in result.message
+    let payload = parseJson(formatResult(result, true))
+    check payload["timings_ms"]["ttfb"].getFloat() >= 50.0
+    check payload["timings_ms"]["total"].getFloat() > 0.0
+    server.waitForSuccess()
+
+  test "HTTP timing accumulates redirects without changing assertions":
+    var server = startLocalServer("http-redirect")
+    defer: server.stop()
+    let result = checkHttp(
+      "http://127.0.0.1:" & $server.port & "/start",
+      timeoutMs = 1000,
+      maxRedirects = 1,
+      search = "fixture-ok",
+      verboseTimings = true
+    )
+    check result.isOk
+    check result.details.startsWith("Status: 200")
+    check result.httpTimings.totalMs > 0.0
+    server.waitForSuccess()
+
   test "HTTP result output omits userinfo, query values, and fragments":
     var server = startLocalServer("http-ok")
     defer: server.stop()
@@ -79,7 +116,8 @@ suite "local HTTP and UDP checks":
       statusRange = "2xx,304",
       responseHeader = "X-Canary-State: ready",
       bodyRegex = "\"status\"\\s*:\\s*\"ready\"",
-      jsonField = "replicas.0.healthy=true"
+      jsonField = "replicas.0.healthy=true",
+      verboseTimings = true
     )
     check result.isOk
     check result.details.startsWith("Status: 202")
@@ -91,11 +129,13 @@ suite "local HTTP and UDP checks":
     let slowResult = checkHttp(
       "http://127.0.0.1:" & $slowServer.port & "/health",
       timeoutMs = 1000,
-      maxLatencyMs = 25
+      maxLatencyMs = 25,
+      verboseTimings = true
     )
     check not slowResult.isOk
     check "Maximum response time: 25ms" in slowResult.details
     check "Response time: " in slowResult.message
+    check parseJson(formatResult(slowResult, true)).hasKey("timings_ms")
     slowServer.waitForSuccess()
 
     var jsonServer = startLocalServer("http-json")
@@ -350,7 +390,8 @@ suite "local TLS certificate check":
       "openssl",
       @[
         "req", "-x509", "-newkey", "rsa:2048", "-nodes", "-sha256",
-        "-subj", "/CN=localhost", "-days", "2", "-keyout", keyFile,
+        "-subj", "/CN=localhost", "-addext",
+        "subjectAltName=DNS:localhost", "-days", "2", "-keyout", keyFile,
         "-out", certFile
       ],
       timeoutMs = 5000
@@ -378,6 +419,29 @@ suite "local TLS certificate check":
     check ipv6Result.isOk
     check ipv6Result.target == "::1"
     ipv6Server.waitForSuccess()
+
+    let hadCaBundle = existsEnv("CURL_CA_BUNDLE")
+    let oldCaBundle = getEnv("CURL_CA_BUNDLE")
+    putEnv("CURL_CA_BUNDLE", certFile)
+    defer:
+      if hadCaBundle:
+        putEnv("CURL_CA_BUNDLE", oldCaBundle)
+      else:
+        delEnv("CURL_CA_BUNDLE")
+    var httpsServer = startLocalServer(
+      "https-ok", ["--cert=" & certFile, "--key=" & keyFile]
+    )
+    defer: httpsServer.stop()
+    let timedResult = checkHttp(
+      "https://localhost:" & $httpsServer.port & "/health",
+      timeoutMs = 2000,
+      verboseTimings = true
+    )
+    check timedResult.isOk
+    check timedResult.httpTimings.tlsHandshakeMs > 0.0
+    check timedResult.httpTimings.totalMs >=
+      timedResult.httpTimings.tlsHandshakeMs
+    httpsServer.waitForSuccess()
 
 suite "SQLite multiprocess concurrency":
   test "concurrent failures update one shared state row without lost writes":

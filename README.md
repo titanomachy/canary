@@ -47,6 +47,8 @@ semantics are defined in the [baseline contract](docs/baseline-contract.md).
 - Linux (the only supported platform in the `0.1.x` series)
 - SQLite development libraries (`libsqlite3-dev` / `sqlite-devel`)
 - OpenSSL command-line tools for TLS certificate checks
+- The libcurl shared library for optional HTTP `--verbose`/`--timing` phase
+  measurements (the curl executable is not used)
 - `ping` (usually provided by `iputils-ping`) for ICMP checks
 - C compiler (GCC or Clang)
 
@@ -94,6 +96,8 @@ result has been received and classified:
   assertions. **The response time is the total elapsed time from starting the
   HTTP check through receiving and processing the complete response.** A
   request failure or timeout is measured until that failure is classified.
+  With `--verbose` (alias `--timing`), the same HTTP operation also reports
+  libcurl transport phases. These do not replace the complete response time.
 - SSL includes both OpenSSL invocations, certificate extraction, expiration
   parsing, and validity classification. The certificate's absolute expiration
   date is intentionally compared with the wall clock; only elapsed duration
@@ -136,6 +140,10 @@ Monitor web applications, REST APIs, and websites with optional keyword matching
 
 # Structured JSON output & Retries (alert only after 2 consecutive failures)
 ./canary http https://myapp.com --retries 2 --json --notify "https://hooks.slack.com/services/..."
+
+# Curl-style phase timings in human output and structured JSON
+./canary http https://example.com --verbose
+./canary http https://example.com --timing --json
 ```
 
 **Options:**
@@ -154,6 +162,7 @@ Monitor web applications, REST APIs, and websites with optional keyword matching
 | `-m=, --methodStr=` | `string` | `"GET"` | HTTP method (`GET`, `POST`, `HEAD`, `PUT`, `DELETE`, `PATCH`, `OPTIONS`) |
 | `-b=, --body=` | `string` | `""` | Payload body for POST/PUT requests |
 | `--maxRedirects=` | `int` | `5` | Maximum number of redirects to follow |
+| `-v, --verbose` (`--timing`) | `bool` | `false` | Report DNS, TCP-connect, TLS-handshake, TTFB, transfer, and total transport timings |
 | `-r=, --retries=` | `int` | `1` | Consecutive failure count required before DOWN alert |
 | `--recoveryThreshold=` | `int` | `1` | Consecutive successes required before recovery alert |
 | `--id=` | `string` | `""` | Stable explicit state identity (recommended when a target has multiple assertions) |
@@ -172,11 +181,36 @@ HTTP ERROR - https://example.com/not-found - Status: 404 Not Found (Expected: 20
 
 $ ./canary http https://example.com --methodStr HEAD --json
 {"check":"http","target":"https://example.com","status":"UP","latency_ms":35,"message":"HTTP OK - https://example.com - Status: 200 OK - Response time: 35ms","details":"Status: 200 OK","response_time_ms":35}
+
+$ ./canary http https://example.com --verbose
+HTTP OK - https://example.com - Status: 200 OK - Response time: 38ms - Timings: DNS 2.104ms, TCP 7.315ms, TLS 13.842ms, TTFB 12.006ms, Transfer 0.184ms, Total 35.451ms
+
+$ ./canary http https://example.com --timing --json
+{"check":"http","target":"https://example.com","status":"UP","latency_ms":38,"message":"HTTP OK - https://example.com - Status: 200 OK - Response time: 38ms - Timings: DNS 2.104ms, TCP 7.315ms, TLS 13.842ms, TTFB 12.006ms, Transfer 0.184ms, Total 35.451ms","details":"Status: 200 OK","response_time_ms":38,"timings_ms":{"dns":2.104,"tcp_connect":7.315,"tls_handshake":13.842,"ttfb":12.006,"transfer":0.184,"total":35.451}}
 ```
 
 Human-readable HTTP output calls this measurement `Response time`. HTTP JSON
 adds the precise `response_time_ms` field; the equal-valued `latency_ms` field
 remains available for compatibility with existing consumers.
+
+Timing mode performs the request in process through libcurl; it does not start
+the `curl` executable and does not expose the URL, request body, or headers in a
+child-process argument list. The phase values are floating-point milliseconds,
+rounded to three decimal places:
+
+- `dns`: start through name resolution;
+- `tcp_connect`: end of DNS through an established TCP connection;
+- `tls_handshake`: end of TCP connect through TLS completion (`0` for HTTP);
+- `ttfb`: end of TCP/TLS setup through the first response byte;
+- `transfer`: first response byte through completion of the response body;
+- `total`: the summed libcurl transport time, including redirects.
+
+`response_time_ms` remains the integer monotonic duration of the whole Canary
+HTTP check, including transport setup and local response assertions. Therefore
+it can be slightly higher than `timings_ms.total`; `--maxLatency` continues to
+apply to `response_time_ms`. A phase is `0` when it does not apply or was not
+completed before a transport failure. Timing fields are omitted unless the
+mode was requested.
 
 ---
 

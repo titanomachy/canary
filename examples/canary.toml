@@ -11,6 +11,7 @@ json = false
 timeout = 3000
 status = 200
 maxRedirects = 3
+# verbose = true # Optional libcurl DNS/TCP/TLS/TTFB/transfer timings.
 # statusRange = "2xx,304"
 # maxLatency = 500
 # responseHeader = "Content-Type: application/json"

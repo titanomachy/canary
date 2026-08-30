@@ -99,6 +99,11 @@ type
       name: "jsonField"
       defaultValue: ""
       desc: "Required JSON scalar as dotted.path=value" .}: string
+    verboseTimings* {.
+      name: "verbose"
+      abbr: "v"
+      defaultValue: false
+      desc: "Show DNS, TCP, TLS, TTFB, transfer, and total timings" .}: bool
 
   SslCliConfig* = object
     host* {.
@@ -232,7 +237,9 @@ const
     "--request", "--payload", "--expected", "--type", "--resolver",
     "--count", "-t", "-s", "-m", "-b", "-p"
   ]
-  BooleanOptions = ["--json", "-j", "--help", "--version"]
+  BooleanOptions = [
+    "--json", "-j", "--verbose", "-v", "--timing", "--help", "--version"
+  ]
   NumericOptions = [
     "--retries", "--recoveryThreshold", "--timeout", "--status", "--maxRedirects", "--maxLatency", "--minDays",
     "--port", "--count", "-r", "-t", "-s", "-m", "-p"
@@ -244,7 +251,9 @@ proc normalizedArguments(arguments: seq[string]): seq[string] =
   ## leave positionals and boolean flags untouched.
   var index = 0
   while index < arguments.len:
-    let argument = arguments[index]
+    let argument =
+      if arguments[index] == "--timing": "--verbose"
+      else: arguments[index]
     if argument in ValueOptions and index + 1 < arguments.len:
       result.add(argument & "=" & arguments[index + 1])
       inc index, 2
@@ -353,7 +362,8 @@ proc toCanaryConfig*(input: CliConfig): CanaryConfig =
         maxLatencyMs: http.maxLatencyMs,
         responseHeader: http.responseHeader,
         bodyRegex: http.bodyRegex,
-        jsonField: http.jsonField
+        jsonField: http.jsonField,
+        verboseTimings: http.verboseTimings
       )
     )
   of CanaryCommand.ssl:

@@ -95,11 +95,31 @@ suite "Canary CLI compatibility contract":
     check result.stdout.contains("--responseHeader")
     check result.stdout.contains("--regex")
     check result.stdout.contains("--jsonField")
+    check result.stdout.contains("--verbose")
     check result.stdout.contains("--json")
     check result.stdout.contains("--id")
     check result.stdout.contains("--config")
     check result.stdout.contains("--recoveryThreshold")
     check result.stderr.len == 0
+
+  test "HTTP verbose JSON exposes phase timings through the CLI":
+    var server = startLocalServer("http-ok", ["--delay-ms=75"])
+    defer: server.stop()
+    let result = runCanary([
+      "http", "http://127.0.0.1:" & $server.port & "/health",
+      "--timeout", "1000", "--timing", "--json"
+    ])
+    result.describe()
+    check result.exitCode == ExitUp
+    check result.stderr.len == 0
+    let payload = parseJson(result.stdout)
+    check payload["timings_ms"]["dns"].getFloat() >= 0.0
+    check payload["timings_ms"]["tcp_connect"].getFloat() >= 0.0
+    check payload["timings_ms"]["tls_handshake"].getFloat() == 0.0
+    check payload["timings_ms"]["ttfb"].getFloat() >= 40.0
+    check payload["timings_ms"]["transfer"].getFloat() >= 0.0
+    check payload["timings_ms"]["total"].getFloat() > 0.0
+    server.waitForSuccess()
 
   test "DNS help describes record, resolver, expectation, and timeout options":
     let result = runCanary(["dns", "--help"])

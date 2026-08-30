@@ -27,6 +27,10 @@ Nim 2.0 or newer, a C compiler, SQLite development libraries, and the system
 tools used by individual checks. The current baseline was verified on Linux
 amd64 with Nim 2.2.10.
 
+Optional HTTP phase timing uses the system libcurl shared library in process.
+The `curl` executable is not required. Ordinary HTTP checks continue to use
+Nim's HTTP client and do not require libcurl to perform a request.
+
 macOS and Windows may compile in part, but they are not supported until their
 complete check suites run in CI. In particular, the current TLS and ICMP checks
 depend on platform-specific command-line tools.
@@ -61,6 +65,12 @@ Human-readable HTTP output labels the value `Response time`. Structured HTTP
 output exposes it as `response_time_ms` and retains the equal-valued generic
 `latency_ms` field for compatibility. The established `--maxLatency` option
 compares this total HTTP response time, despite its legacy name.
+
+`--verbose` (alias `--timing`) additionally exposes libcurl transport phases in
+floating-point milliseconds under `timings_ms`: DNS, TCP connect, TLS
+handshake, TTFB, transfer, and transport total. These phase values do not
+replace the complete monotonic `response_time_ms` measurement. An inapplicable
+or incomplete phase is zero; timing fields are omitted when timing mode is off.
 
 Absolute certificate expiration still requires the system wall clock; only the
 elapsed SSL check duration is monotonic. On some systems the monotonic clock

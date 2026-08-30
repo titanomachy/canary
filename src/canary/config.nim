@@ -34,6 +34,7 @@ type
     responseHeader*: string
     bodyRegex*: string
     jsonField*: string
+    verboseTimings*: bool
 
   SslConfig* = object
     host*: string

@@ -44,6 +44,11 @@ substring; without a request it matches server-first banners. `--timeout`
 bounds the complete connect, send, and receive sequence. Omitting both values
 retains the established connect-only behavior.
 
+The HTTP command accepts `-v`/`--verbose`; `--timing` is an equivalent alias.
+This opt-in mode adds transport phases to human output and a `timings_ms` object
+to JSON. It does not change status, body, header, regex, JSON-field, redirect,
+timeout, or maximum-response-time assertions.
+
 All six network checks accept IPv6. HTTP(S) targets use bracketed URL
 authorities such as `http://[::1]:8080/health`. TCP, UDP, SSL, and ICMP host
 arguments accept bare (`::1`) or bracketed (`[::1]`) literals. A displayed
@@ -93,6 +98,17 @@ also contain the equal-valued `response_time_ms` field and label the value
 `Response time` in their human-readable message. It is the total monotonic
 elapsed time from starting the HTTP check through receiving and processing the
 complete response. `--maxLatency` applies to that same total response time.
+
+With HTTP timing mode, `timings_ms` contains floating-point millisecond fields
+`dns`, `tcp_connect`, `tls_handshake`, `ttfb`, `transfer`, and `total`. DNS is
+measured from transport start through resolution; TCP connect starts after DNS;
+TLS handshake starts after TCP; TTFB starts after TCP or TLS setup; transfer
+starts at the first response byte. `total` is the summed libcurl transport time
+and includes redirects. A field is zero when its phase is not applicable or
+did not complete. The object is present on both successful and failed timed
+requests and is omitted from ordinary HTTP results. The existing integer
+`response_time_ms` remains the broader monotonic Canary check duration and can
+therefore be slightly greater than `timings_ms.total`.
 
 ## Automated coverage
 

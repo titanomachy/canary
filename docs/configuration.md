@@ -49,6 +49,7 @@ status = 200
 maxRedirects = 3
 # statusRange = "2xx,304" # Replaces the exact status assertion when set.
 # maxLatency = 500 # Maximum total HTTP response time; legacy option name
+# verbose = true # Include curl-style transport phases in output.
 # responseHeader = "Content-Type: application/json"
 # regex = "ready|healthy"
 # jsonField = "service.status=ready"
@@ -78,7 +79,7 @@ leave `DOWN`. Available command keys are:
 
 | Table | Keys |
 | --- | --- |
-| `[http]` | `timeout`, `status`, `statusRange`, `maxLatency`, `search`, `regex`, `headers`, `responseHeader`, `jsonField`, `methodStr`, `body`, `maxRedirects` |
+| `[http]` | `timeout`, `status`, `statusRange`, `maxLatency`, `verbose`, `search`, `regex`, `headers`, `responseHeader`, `jsonField`, `methodStr`, `body`, `maxRedirects` |
 | `[ssl]` | `minDays`, `port`, `timeout` |
 | `[tcp]` | `port`, `request`, `expected`, `timeout` |
 | `[udp]` | `port`, `payload`, `expected`, `timeout` |
@@ -88,6 +89,10 @@ leave `DOWN`. Available command keys are:
 The established HTTP key `maxLatency` is retained for compatibility. It limits
 the total HTTP response time defined in the
 [baseline contract](baseline-contract.md), not only one network phase.
+`verbose = true`, `CANARY_VERBOSE=true`, or CLI `--verbose` enables the
+libcurl-backed phase measurements. `--timing` is a CLI-only alias. The
+structured fields and exact phase boundaries are defined in the
+[CLI contract](cli-contract.md).
 
 Targets (`url` or `host`) are intentionally not loaded from TOML or the
 environment. Supply exactly one target after the command.
@@ -126,7 +131,7 @@ host and port need independent retry and notification state.
 
 Environment names use the `CANARY_` prefix and the uppercased option name:
 `CANARY_RETRIES`, `CANARY_RECOVERYTHRESHOLD`, `CANARY_DB`, `CANARY_TIMEOUT`,
-`CANARY_STATUS`, `CANARY_STATUSRANGE`, `CANARY_MAXLATENCY`, `CANARY_NOTIFY`,
+`CANARY_STATUS`, `CANARY_STATUSRANGE`, `CANARY_MAXLATENCY`, `CANARY_VERBOSE`, `CANARY_NOTIFY`,
 `CANARY_REQUEST`, `CANARY_EXPECTED`, `CANARY_TYPE`, `CANARY_RESOLVER`, and
 `CANARY_HEADERS`, for example. Camel-case
 option names do not gain an extra underscore: use `CANARY_MINDAYS` and

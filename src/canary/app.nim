@@ -23,7 +23,8 @@ proc executeCheck*(config: CanaryConfig): CheckResult =
       http.maxLatencyMs,
       http.responseHeader,
       http.bodyRegex,
-      http.jsonField
+      http.jsonField,
+      http.verboseTimings
     )
   of ckSsl:
     let ssl = config.sslConfig
