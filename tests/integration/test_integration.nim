@@ -474,3 +474,47 @@ suite "SQLite multiprocess concurrency":
       worker.close()
 
     check readState(dbPath, jobId) == ("PENDING_DOWN", 8)
+
+  test "concurrent DOWN runs enqueue one due reminder":
+    let testDir = newTestDir("concurrent-reminder")
+    defer: removeDir(testDir)
+    let dbPath = testDir / "state.db"
+    let jobId = "shared-reminder"
+    let sender: NotificationSender = proc(url, message: string): bool = true
+    discard processStateAndNotify(
+      jobId, false, "mock://alerts", dbPath, sender = sender,
+      repeatIntervalSeconds = 60, timestampOverride = 1_000
+    )
+
+    var workers: seq[Process]
+    for _ in 0 ..< 8:
+      workers.add(startProcess(
+        StateWorkerBinary,
+        workingDir = ProjectRoot,
+        args = [
+          dbPath, jobId, "false", "1", "mock://alerts", "60", "2000"
+        ],
+        options = {}
+      ))
+
+    for worker in workers:
+      let exitCode = worker.waitForExit()
+      let stdout = worker.outputStream.readAll()
+      let stderr = worker.errorStream.readAll()
+      checkpoint(
+        "worker exit: " & $exitCode & "\nstdout:\n" & stdout &
+        "\nstderr:\n" & stderr
+      )
+      check exitCode == 0
+      check stdout.len == 0
+      worker.close()
+
+    let db = openDatabase(dbPath)
+    defer: db.close()
+    let row = db.one(
+      "SELECT COUNT(*) FROM notification_outbox " &
+      "WHERE check_id = ? AND event_kind = 'REMINDER'",
+      jobId
+    )
+    require row.isSome
+    check row.get()[0].fromDb(int) == 1

@@ -8,9 +8,9 @@ A lightweight, stateless-by-default service health and uptime monitoring CLI in 
 
 Many monitoring solutions are heavy background daemons bundling their own schedulers, web servers, and persistent services. **Canary** adheres to the Unix philosophy: *do one thing and do it well*.
 
-1. **Stateless & Fast:** Without `--db`, `CANARY_DB`, or `--notify`, Canary executes one targeted health check without writing state and exits immediately.
+1. **Stateless & Fast:** Without `--db`, `CANARY_DB`, `--notify`, or an explicit `--silenceUntil` state change, Canary executes one targeted health check without writing state and exits immediately.
 2. **Orchestrated by Metronome/Metronome-Web:** [Metronome](https://github.com/titanomachy/Metronome)/[Metronome-Web](https://github.com/titanomachy/Metronome-Web) manages the cron/interval schedule, asynchronous job execution, run history, and Apache ECharts response-time visualisations.
-3. **Smart State Tracking & Alerting:** Powered by [nim-sqlite](https://github.com/titanomachy/nim-sqlite), Canary records endpoint status and failure counts in an embedded SQLite database (`~/.config/canary/state.db`). Notifications (Pushover, Slack, Discord, Webhooks) are dispatched **only on state transitions** (`UP -> DOWN` and `DOWN -> UP`), eliminating alert fatigue and false positives.
+3. **Smart State Tracking & Alerting:** Powered by [nim-sqlite](https://github.com/titanomachy/nim-sqlite), Canary records endpoint status and failure counts in an embedded SQLite database (`~/.config/canary/state.db`). Notifications (Pushover, Slack, Discord, Webhooks) are dispatched on state transitions, with optional cooldowns, DOWN reminders, and maintenance silences.
 
 ```text
 ┌────────────────────────────────────────────────────────────────────────┐
@@ -165,6 +165,9 @@ Monitor web applications, REST APIs, and websites with optional keyword matching
 | `-v, --verbose` (`--timing`) | `bool` | `false` | Report DNS, TCP-connect, TLS-handshake, TTFB, transfer, and total transport timings |
 | `-r=, --retries=` | `int` | `1` | Consecutive failure count required before DOWN alert |
 | `--recoveryThreshold=` | `int` | `1` | Consecutive successes required before recovery alert |
+| `--cooldown=` | `int` | `0` | Minimum seconds between DOWN-class notifications; `0` disables |
+| `--repeatInterval=` | `int` | `0` | Repeat a DOWN alert after this many seconds; `0` disables |
+| `--silenceUntil=` | `string` | `""` | Persistently suppress notifications until a UTC timestamp; `clear` removes it |
 | `--id=` | `string` | `""` | Stable explicit state identity (recommended when a target has multiple assertions) |
 | `-n=, --notify=` | repeatable string | none | Notification URL; repeat for multiple endpoints |
 | `-d=, --db=` | `string` | `""` | Path to SQLite database (optional, see State Tracking) |
@@ -237,6 +240,9 @@ Monitor certificate validity and days remaining before expiration.
 | `-t=, --timeout=` | `int` | `5000` | Timeout in milliseconds |
 | `-r=, --retries=` | `int` | `1` | Consecutive failure count required before DOWN alert |
 | `--recoveryThreshold=` | `int` | `1` | Consecutive successes required before recovery alert |
+| `--cooldown=` | `int` | `0` | Minimum seconds between DOWN-class notifications; `0` disables |
+| `--repeatInterval=` | `int` | `0` | Repeat a DOWN alert after this many seconds; `0` disables |
+| `--silenceUntil=` | `string` | `""` | Persistently suppress notifications until a UTC timestamp; `clear` removes it |
 | `--id=` | `string` | `""` | Stable explicit state identity |
 | `-n=, --notify=` | repeatable string | none | Notification URL; repeat for multiple endpoints |
 | `-j, --json` | `bool` | `false` | Output result as JSON object |
@@ -393,8 +399,9 @@ Linux `ping` implementation.
 
 ## SQLite State Tracking & Flapping Protection
 
-State tracking is opt-in through `--db`, `CANARY_DB`, or `--notify`. Without one
-of these inputs Canary does not create or update a database. When enabled,
+State tracking is opt-in through `--db`, `CANARY_DB`, `--notify`, or an explicit
+`--silenceUntil` state change. Without one of these inputs Canary does not
+create or update a database. When enabled,
 Canary uses the [nim-sqlite](https://github.com/titanomachy/nim-sqlite) library
 for embedded state persistence.
 
@@ -429,7 +436,10 @@ CREATE TABLE IF NOT EXISTS canary_state (
   status TEXT NOT NULL,         -- 'UNKNOWN', 'UP', 'PENDING_DOWN', or 'DOWN'
   fail_count INTEGER NOT NULL,  -- Consecutive failures (for flapping protection)
   success_count INTEGER NOT NULL, -- Consecutive successes while DOWN
-  last_check INTEGER NOT NULL   -- Unix timestamp of last check
+  last_check INTEGER NOT NULL,  -- Unix timestamp of last check
+  last_notification INTEGER NOT NULL, -- Last queued alert/recovery/reminder
+  incident_alerted INTEGER NOT NULL,  -- Current DOWN incident was announced
+  silenced_until INTEGER NOT NULL     -- Persisted UTC silence end, Unix time
 );
 ```
 
@@ -457,6 +467,43 @@ By default, Canary triggers an alert on the first failure (`--retries 1`). For u
   `--recoveryThreshold` consecutive successes have occurred, status changes to
   `UP` and a **[RECOVERY] notification is queued**.
 
+### 5. Cooldowns, reminders, and maintenance silence
+
+All three controls are per check ID and default to disabled:
+
+- `--cooldown SECONDS` prevents a newly flapping DOWN incident or reminder from
+  being queued until at least that many seconds have passed since the previous
+  notification. Recovery notifications are immediate. Because Canary is a
+  scheduled CLI, the catch-up alert is queued by the first run after cooldown.
+- `--repeatInterval SECONDS` queues `[REMINDER]` notifications on failed runs
+  while the state remains `DOWN`. A successful sample that is still below the
+  recovery threshold never emits a DOWN reminder. The effective reminder gap is
+  the larger of this interval and the cooldown. A transaction ensures
+  concurrent runs enqueue at most one due reminder.
+- `--silenceUntil 2026-08-30T18:00:00Z` persists an absolute UTC maintenance
+  end for the check. Health state and retry counters continue to update, while
+  transition creation and pending outbox delivery are suppressed. If the check
+  is still `DOWN` when maintenance ends, the first later run queues a catch-up
+  alert. A recovery during the silence cancels its still-pending alert. Use
+  `--silenceUntil clear` to end a persisted window early.
+
+For example:
+
+```bash
+# Remind every hour, but never emit DOWN-class messages less than 15 min apart.
+canary http https://api.example.test/health --id production-api \
+  --notify 'https://hooks.example.invalid/private' \
+  --cooldown 900 --repeatInterval 3600
+
+# Start a maintenance silence; later scheduled runs may omit --silenceUntil.
+canary http https://api.example.test/health --id production-api \
+  --silenceUntil 2026-08-30T18:00:00Z --db /var/lib/canary/state.db
+```
+
+The interval is evaluated only when Canary runs. Schedule the check more often
+than the desired reminder precision. Keep `--id`, database, and timing settings
+consistent across invocations so they share one state owner.
+
 ---
 
 ## Notifications & Alerts
@@ -465,8 +512,9 @@ Canary supports multiple notification endpoints simultaneously. Repeat
 `--notify URL` for CLI use, use a TOML `notify` array, or place one URL (multiple
 URLs separated by newlines) in `CANARY_NOTIFY`.
 
-Transition notifications use a durable SQLite outbox. State and outbox rows are
-committed atomically, and temporary failures are retried on later runs with
+Transition and reminder notifications use a durable SQLite outbox. State and
+outbox rows are committed atomically, and temporary failures are retried on
+later runs with
 bounded exponential backoff. Delivery is at-least-once, so providers may rarely
 receive a duplicate around a process crash.
 

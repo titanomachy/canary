@@ -15,6 +15,8 @@ State tracking is enabled explicitly by any of these inputs:
 - a non-empty TOML `db` setting;
 - `--notify URL`, `CANARY_NOTIFY`, or a TOML `notify` setting, because
   transition-based notifications require persisted state.
+- `--silenceUntil`, `CANARY_SILENCEUNTIL`, or a TOML `silenceUntil` setting,
+  because maintenance windows are durable per check ID.
 
 If notification is enabled without an explicit database path, Canary stores
 state in `~/.config/canary/state.db`. Supplying a database without notification
@@ -108,6 +110,12 @@ bounded exponential backoff and deterministic jitter. Delivery remains
 at-least-once: a process that exits after a provider accepts a message but
 before SQLite records it as sent may cause a duplicate after the delivery lease
 expires.
+
+Optional cooldowns, repeat intervals, and maintenance silences are also
+evaluated transactionally per check ID. They affect notification scheduling
+only: checks still run, state thresholds still advance, and the health-check
+exit code remains authoritative. Silence prevents another process from
+claiming that check's pending outbox rows until the stored UTC end time.
 
 ## Version source
 

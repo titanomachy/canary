@@ -27,6 +27,10 @@ proc validateRecoveryThreshold*(threshold: int) =
   if threshold < 1:
     configError("recoveryThreshold must be at least 1")
 
+proc validateNotificationInterval*(name: string, seconds: int) =
+  if seconds < 0:
+    configError(name & " must be zero or greater")
+
 proc validatePort*(port: int) =
   ## Validate a TCP or UDP port number.
   if port < 1 or port > 65535:

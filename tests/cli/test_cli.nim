@@ -100,6 +100,9 @@ suite "Canary CLI compatibility contract":
     check result.stdout.contains("--id")
     check result.stdout.contains("--config")
     check result.stdout.contains("--recoveryThreshold")
+    check result.stdout.contains("--cooldown")
+    check result.stdout.contains("--repeatInterval")
+    check result.stdout.contains("--silenceUntil")
     check result.stderr.len == 0
 
   test "HTTP verbose JSON exposes phase timings through the CLI":
@@ -307,6 +310,9 @@ suite "Canary CLI compatibility contract":
       @["http", "http://127.0.0.1", "--timeout", "0"],
       @["http", "http://127.0.0.1", "--retries", "0"],
       @["http", "http://127.0.0.1", "--recoveryThreshold", "0"],
+      @["http", "http://127.0.0.1", "--cooldown", "-1"],
+      @["http", "http://127.0.0.1", "--repeatInterval", "-1"],
+      @["http", "http://127.0.0.1", "--silenceUntil", "tomorrow"],
       @["http", "http://127.0.0.1", "--status", "99"],
       @["http", "http://127.0.0.1", "--methodStr", "BREW"],
       @["tcp", "bad host", "--port", "80"],
@@ -506,6 +512,38 @@ suite "Canary CLI compatibility contract":
     for secret in ["first-secret", "second-secret"]:
       check secret notin result.stdout
       check secret notin result.stderr
+
+  test "a maintenance silence updates state without attempting delivery":
+    let (reservation, port) = reservedPort()
+    defer: reservation.close()
+    let testDir = getTempDir() / (
+      "canary-cli-silence-" & $getCurrentProcessId() & "-" &
+      $(epochTime() * 1_000_000).int64
+    )
+    createDir(testDir)
+    defer: removeDir(testDir)
+
+    let result = runCanary([
+      "tcp", "127.0.0.1", "--port", $port, "--timeout", "500",
+      "--json", "--db", testDir / "state.db",
+      "--notify", "mock://must-not-leak", "--silenceUntil",
+      "2099-01-01T00:00:00Z"
+    ])
+    result.describe()
+    check result.exitCode == ExitDown
+    check result.stderr.len == 0
+    let payload = parseJson(result.stdout)
+    check payload["notifications"].len == 0
+
+    let db = openDatabase(testDir / "state.db")
+    defer: db.close()
+    let row = db.one(
+      "SELECT status, incident_alerted, silenced_until FROM canary_state"
+    )
+    require row.isSome
+    check row.get()[0].fromDb(string) == "DOWN"
+    check row.get()[1].fromDb(int) == 0
+    check row.get()[2].fromDb(int64) > getTime().toUnix()
 
   test "notification test loads its secret from the environment":
     var webhook = startLocalServer("webhook-ok")

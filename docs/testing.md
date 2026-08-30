@@ -19,6 +19,9 @@ mapping, input ranges, URL validation, human and JSON result formatting, typed
 configuration for all six check kinds, parser-independent check execution,
 stable and explicit check IDs, layered TOML/environment/CLI precedence,
 environment-based secret inputs, and state transitions.
+Notifier state coverage also fixes the clock to verify cooldown catch-up,
+DOWN reminders, persisted maintenance windows, deferred delivery, stale-alert
+cancellation on recovery, and in-place schema migration.
 
 Timing coverage verifies that the shared elapsed-time helper accepts a
 monotonic `MonoTime`, HTTP output uses `Response time` and
@@ -44,6 +47,8 @@ UP + failure below threshold ────> UP (pending failure)
 pending failure + success ───────> UP (counter reset)
 DOWN + failure ──────────────────> DOWN (no duplicate alert)
 DOWN + success ──────────────────> UP + recovery
+DOWN + repeat interval elapsed ──> DOWN + reminder
+silenced DOWN + silence elapsed ─> DOWN + catch-up alert
 ```
 
 ## Integration fixtures
@@ -67,7 +72,9 @@ scenario and exits. Its modes provide:
 
 The timeout scenarios use short, bounded local waits. The concurrency test
 starts eight `state_worker` processes against one state row and verifies that
-the transactionally updated failure count contains every write.
+the transactionally updated failure count contains every write. A second
+eight-process scenario fixes the notifier clock and verifies that only one due
+DOWN reminder is enqueued.
 
 The CLI suite verifies help, version, parser and application exit codes, missing
 and invalid TOML, the optional default path, typed validation, precedence,

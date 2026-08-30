@@ -4,6 +4,12 @@
 
 retries = 2
 recoveryThreshold = 2
+# Minimum gap between DOWN alerts/reminders. Zero disables the cooldown.
+cooldown = 0
+# Repeat while DOWN. Zero keeps transition-only notifications.
+repeatInterval = 0
+# Persist a maintenance window per check ID. Use "clear" to end it early.
+# silenceUntil = "2026-08-30T18:00:00Z"
 json = false
 # notify = ["https://hooks.example.invalid/private-token"]
 

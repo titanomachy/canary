@@ -38,6 +38,18 @@ type
       name: "recoveryThreshold"
       defaultValue: 1
       desc: "Consecutive successes required before a recovery alert" .}: int
+    cooldownSeconds* {.
+      name: "cooldown"
+      defaultValue: 0
+      desc: "Minimum seconds between DOWN-class notifications (0 disables)" .}: int
+    repeatIntervalSeconds* {.
+      name: "repeatInterval"
+      defaultValue: 0
+      desc: "Repeat a DOWN alert after this many seconds (0 disables)" .}: int
+    silenceUntil* {.
+      name: "silenceUntil"
+      defaultValue: ""
+      desc: "Suppress notifications until a UTC timestamp, or use clear" .}: string
     asJson* {.
       name: "json"
       abbr: "j"
@@ -231,7 +243,8 @@ const
   Commands = ["http", "ssl", "tcp", "udp", "dns", "icmp"]
   ValueOptions = [
     "--config", "--id", "--notify", "--db", "--retries", "-n", "-d",
-    "-r", "--recoveryThreshold", "--timeout", "--status", "--search", "--headers", "--methodStr",
+    "-r", "--recoveryThreshold", "--cooldown", "--repeatInterval",
+    "--silenceUntil", "--timeout", "--status", "--search", "--headers", "--methodStr",
     "--body", "--maxRedirects", "--statusRange", "--maxLatency",
     "--responseHeader", "--regex", "--jsonField", "--minDays", "--port",
     "--request", "--payload", "--expected", "--type", "--resolver",
@@ -241,7 +254,8 @@ const
     "--json", "-j", "--verbose", "-v", "--timing", "--help", "--version"
   ]
   NumericOptions = [
-    "--retries", "--recoveryThreshold", "--timeout", "--status", "--maxRedirects", "--maxLatency", "--minDays",
+    "--retries", "--recoveryThreshold", "--cooldown", "--repeatInterval",
+    "--timeout", "--status", "--maxRedirects", "--maxLatency", "--minDays",
     "--port", "--count", "-r", "-t", "-s", "-m", "-p"
   ]
 
@@ -333,6 +347,9 @@ proc commonConfig(input: CommonCliConfig): CommonConfig =
     dbPath: input.dbPath,
     retries: input.retries,
     recoveryThreshold: input.recoveryThreshold,
+    cooldownSeconds: input.cooldownSeconds,
+    repeatIntervalSeconds: input.repeatIntervalSeconds,
+    silenceUntil: input.silenceUntil,
     asJson: input.asJson
   )
 
@@ -481,7 +498,7 @@ proc printTopLevelHelp() =
   stdout.writeLine("")
   stdout.writeLine(
     "Common options: --config, --id, --notify, --db, --retries, " &
-      "--recoveryThreshold, --json"
+      "--recoveryThreshold, --cooldown, --repeatInterval, --silenceUntil, --json"
   )
   stdout.writeLine("Use 'canary <command> --help' for command-specific help.")
 

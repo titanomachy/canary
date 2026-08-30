@@ -93,3 +93,20 @@ by a crashed process while preventing concurrent Canary runs from normally
 sending the same row together. This provides durable at-least-once delivery;
 providers can still observe a duplicate if the process exits after sending but
 before recording `sent`.
+
+Cooldown, repeat, and maintenance decisions use the same transaction. Each
+state row stores the last queued notification, whether the current DOWN
+incident has been announced, and an absolute `silenced_until` timestamp.
+Therefore concurrent processes cannot both decide that the same reminder is
+due. Cooldown gates DOWN-class alerts; recovery remains immediate. A configured
+repeat interval produces a reminder only on a failed check run where both it
+and the cooldown have elapsed. A successful sample during a multi-run recovery
+threshold does not create a DOWN reminder.
+
+A silence is durable and owned by the check ID. It does not freeze health
+state: failure and recovery thresholds keep advancing. The outbox claim query
+also checks the state row, so already-pending events for a silenced check are
+not delivered by another process. An outage that outlives the window receives
+a catch-up alert on the next run. If recovery occurs during the window, a
+pending DOWN alert is cancelled and the unannounced incident does not generate
+a recovery message.

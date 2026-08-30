@@ -60,7 +60,7 @@ proc stateTrackingRequested(common: CommonConfig): bool =
   ## Notifications need state to detect transitions; otherwise persistence is
   ## opt-in through the model or the established CANARY_DB environment input.
   common.notifyUrls.len > 0 or common.dbPath.len > 0 or
-    getEnv("CANARY_DB").len > 0
+    getEnv("CANARY_DB").len > 0 or common.silenceUntil.len > 0
 
 proc run*(config: CanaryConfig): int =
   ## Orchestrate one configuration and return the public process exit code.
@@ -86,7 +86,13 @@ proc run*(config: CanaryConfig): int =
       config.common.retries,
       config.common.recoveryThreshold,
       safeResult.latencyMs,
-      safeResult.details
+      safeResult.details,
+      cooldownSeconds = config.common.cooldownSeconds,
+      repeatIntervalSeconds = config.common.repeatIntervalSeconds,
+      silenceUntil = if config.common.silenceUntil.len == 0:
+        -1'i64
+      else:
+        parseSilenceUntil(config.common.silenceUntil)
     )
   if config.common.asJson:
     var output = parseJson(formatResult(checkResult, true))

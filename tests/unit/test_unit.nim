@@ -78,12 +78,23 @@ suite "input parsing and validation":
     validatePacketCount(1)
     validatePacketCount(MaxIcmpPacketCount)
     validateRecoveryThreshold(1)
+    validateNotificationInterval("cooldown", 0)
+    validateNotificationInterval("repeatInterval", 60)
     expect ValueError:
       validatePacketCount(0)
     expect ValueError:
       validatePacketCount(MaxIcmpPacketCount + 1)
     expect ValueError:
       validateRecoveryThreshold(0)
+    expect ValueError:
+      validateNotificationInterval("cooldown", -1)
+
+  test "silence windows use explicit UTC timestamps and support clearing":
+    check parseSilenceUntil("2026-08-30T18:00:00Z") == 1788112800
+    check parseSilenceUntil("clear") == 0
+    check parseSilenceUntil("") == 0
+    expect CanaryConfigError:
+      discard parseSilenceUntil("tomorrow evening")
 
   test "hostnames and expected DNS addresses are validated":
     for hostname in [
@@ -397,7 +408,8 @@ suite "layered CLI configuration":
     const EnvironmentKeys = [
       "CANARY_RETRIES", "CANARY_NOTIFY", "CANARY_HEADERS", "CANARY_STATUS",
       "CANARY_TIMEOUT", "CANARY_JSON", "CANARY_RECOVERYTHRESHOLD",
-      "CANARY_VERBOSE"
+      "CANARY_VERBOSE", "CANARY_COOLDOWN", "CANARY_REPEATINTERVAL",
+      "CANARY_SILENCEUNTIL"
     ]
     var savedEnvironment: seq[tuple[key: string, present: bool, value: string]]
     for key in EnvironmentKeys:
@@ -421,6 +433,9 @@ suite "layered CLI configuration":
     writeFile(configPath,
       "retries = 2\n\n" &
       "recoveryThreshold = 2\n\n" &
+      "cooldown = 30\n" &
+      "repeatInterval = 300\n" &
+      "silenceUntil = \"2026-08-30T18:00:00Z\"\n\n" &
       "[http]\n" &
       "status = 201\n" &
       "timeout = 1200\n" &
@@ -428,17 +443,24 @@ suite "layered CLI configuration":
 
     putEnv("CANARY_RETRIES", "3")
     putEnv("CANARY_RECOVERYTHRESHOLD", "3")
+    putEnv("CANARY_COOLDOWN", "45")
+    putEnv("CANARY_REPEATINTERVAL", "600")
     putEnv("CANARY_NOTIFY", "https://env-secret.invalid/hook")
     putEnv("CANARY_HEADERS", "Authorization: Bearer env-secret")
     putEnv("CANARY_VERBOSE", "true")
     let parsed = loadCliConfig(@[
       "http", "https://example.test/health", "--config", configPath,
-      "--retries", "4", "--recoveryThreshold", "4", "--timeout", "1300"
+      "--retries", "4", "--recoveryThreshold", "4", "--cooldown", "60",
+      "--repeatInterval", "900", "--silenceUntil", "clear",
+      "--timeout", "1300"
     ]).toCanaryConfig()
 
     check parsed.kind == ckHttp
     check parsed.common.retries == 4
     check parsed.common.recoveryThreshold == 4
+    check parsed.common.cooldownSeconds == 60
+    check parsed.common.repeatIntervalSeconds == 900
+    check parsed.common.silenceUntil == "clear"
     check parsed.common.notifyUrls == @["https://env-secret.invalid/hook"]
     check parsed.httpConfig.headers == "Authorization: Bearer env-secret"
     check parsed.httpConfig.expectedStatus == 201
@@ -839,6 +861,142 @@ suite "state transition table":
     check sent.get()[0].fromDb(string) == "sent"
     check sent.get()[1].fromDb(int64) > 0
 
+  test "DOWN reminders are emitted only after their configured interval":
+    let testDir = newTestDir("notification-reminders")
+    defer: removeDir(testDir)
+    let dbPath = testDir / "state.db"
+    var messages: seq[string]
+    let sender: NotificationSender = proc(url, message: string): bool =
+      messages.add(message)
+      true
+
+    discard processStateAndNotify(
+      "repeat-check", false, "mock://alerts", dbPath, sender = sender,
+      repeatIntervalSeconds = 60, timestampOverride = 1_000
+    )
+    discard processStateAndNotify(
+      "repeat-check", false, "mock://alerts", dbPath, sender = sender,
+      repeatIntervalSeconds = 60, timestampOverride = 1_059
+    )
+    check messages.len == 1
+
+    discard processStateAndNotify(
+      "repeat-check", false, "mock://alerts", dbPath, sender = sender,
+      repeatIntervalSeconds = 60, timestampOverride = 1_060
+    )
+    check messages.len == 2
+    check messages[0].startsWith("[ALERT]")
+    check "kind=ALERT" in messages[0]
+    check messages[1].startsWith("[REMINDER]")
+    check "kind=REMINDER" in messages[1]
+
+  test "a successful recovery-threshold sample does not emit a DOWN reminder":
+    let testDir = newTestDir("notification-recovery-no-reminder")
+    defer: removeDir(testDir)
+    let dbPath = testDir / "state.db"
+    var messages: seq[string]
+    let sender: NotificationSender = proc(url, message: string): bool =
+      messages.add(message)
+      true
+
+    discard processStateAndNotify(
+      "recovering-check", false, "mock://alerts", dbPath,
+      recoveryThreshold = 2, sender = sender,
+      repeatIntervalSeconds = 60, timestampOverride = 1_000
+    )
+    discard processStateAndNotify(
+      "recovering-check", true, "mock://alerts", dbPath,
+      recoveryThreshold = 2, sender = sender,
+      repeatIntervalSeconds = 60, timestampOverride = 1_060
+    )
+    check messages.len == 1
+    check readState(dbPath, "recovering-check") == ("DOWN", 0)
+
+  test "cooldown suppresses a new flapping alert until a later run":
+    let testDir = newTestDir("notification-cooldown")
+    defer: removeDir(testDir)
+    let dbPath = testDir / "state.db"
+    var messages: seq[string]
+    let sender: NotificationSender = proc(url, message: string): bool =
+      messages.add(message)
+      true
+
+    for sample in [
+      (false, 1_000'i64), (true, 1_010'i64), (false, 1_020'i64)
+    ]:
+      discard processStateAndNotify(
+        "cooldown-check", sample[0], "mock://alerts", dbPath,
+        sender = sender, cooldownSeconds = 60,
+        timestampOverride = sample[1]
+      )
+    check messages.len == 2
+    check messages[0].startsWith("[ALERT]")
+    check messages[1].startsWith("[RECOVERY]")
+
+    discard processStateAndNotify(
+      "cooldown-check", false, "mock://alerts", dbPath, sender = sender,
+      cooldownSeconds = 60, timestampOverride = 1_070
+    )
+    check messages.len == 3
+    check messages[2].startsWith("[ALERT]")
+
+  test "silence persists and sends a catch-up alert for an active outage":
+    let testDir = newTestDir("notification-silence")
+    defer: removeDir(testDir)
+    let dbPath = testDir / "state.db"
+    var messages: seq[string]
+    let sender: NotificationSender = proc(url, message: string): bool =
+      messages.add(message)
+      true
+
+    discard processStateAndNotify(
+      "maintenance-check", false, "mock://alerts", dbPath, sender = sender,
+      silenceUntil = 1_200, timestampOverride = 1_000
+    )
+    discard processStateAndNotify(
+      "maintenance-check", false, "mock://alerts", dbPath, sender = sender,
+      timestampOverride = 1_199
+    )
+    check messages.len == 0
+
+    discard processStateAndNotify(
+      "maintenance-check", false, "mock://alerts", dbPath, sender = sender,
+      timestampOverride = 1_200
+    )
+    check messages.len == 1
+    check messages[0].startsWith("[ALERT]")
+
+  test "silence defers pending delivery and cancels stale alerts on recovery":
+    let testDir = newTestDir("notification-silence-pending")
+    defer: removeDir(testDir)
+    let dbPath = testDir / "state.db"
+    let failingSender: NotificationSender = proc(url, message: string): bool =
+      false
+    let successfulSender: NotificationSender = proc(url,
+                                                    message: string): bool =
+      true
+
+    discard processStateAndNotify(
+      "silenced-pending", false, "mock://alerts", dbPath,
+      sender = failingSender, timestampOverride = 1_000
+    )
+    let whileSilenced = processStateAndNotify(
+      "silenced-pending", true, "mock://alerts", dbPath,
+      sender = successfulSender, silenceUntil = 1_200,
+      timestampOverride = 1_002
+    )
+    check whileSilenced.len == 0
+
+    discard processStateAndNotify(
+      "silenced-pending", true, "mock://alerts", dbPath,
+      sender = successfulSender, timestampOverride = 1_200
+    )
+    let db = openDatabase(dbPath)
+    defer: db.close()
+    let row = db.one("SELECT status FROM notification_outbox")
+    require row.isSome
+    check row.get()[0].fromDb(string) == "cancelled"
+
   test "legacy state databases are migrated in place":
     let testDir = newTestDir("state-migration")
     defer: removeDir(testDir)
@@ -863,11 +1021,13 @@ suite "state transition table":
     let db = openDatabase(dbPath)
     defer: db.close()
     let row = db.one(
-      "SELECT status, success_count FROM canary_state WHERE id = 'legacy'"
+      "SELECT status, success_count, incident_alerted " &
+      "FROM canary_state WHERE id = 'legacy'"
     )
     require row.isSome
     check row.get()[0].fromDb(string) == "DOWN"
     check row.get()[1].fromDb(int) == 1
+    check row.get()[2].fromDb(int) == 1
 
   test "state transition rolls back when its outbox insert fails":
     let testDir = newTestDir("state-outbox-atomicity")

@@ -30,14 +30,17 @@ The test layers are:
   execution, layered TOML/environment/CLI configuration, parsing, validation,
   result formatting, redaction, direct
   helper-process arguments/timeouts, check IDs, and the complete SQLite
-  state-transition table. Every state test owns a temporary database.
+  state-transition table. Deterministic notifier clocks cover cooldowns,
+  reminders, and maintenance silences. Every state test owns a temporary
+  database.
 - `integration/test_integration.nim`: local HTTP, TCP, UDP, DNS, TLS, and
   webhook servers on random ports, HTTP phase timing (including a real local
   TLS handshake), IPv6 loopback coverage for every socket
-  transport, plus a multiprocess SQLite concurrency test.
+  transport, plus multiprocess SQLite state and reminder concurrency tests.
 - `cli/test_cli.nim`: black-box coverage of the public behavior in
   `docs/cli-contract.md`, including config paths, precedence, typed errors, and
-  explicit state identity, using local IPv4 and IPv6 TCP sockets.
+  explicit state identity and silence behavior, using local IPv4 and IPv6 TCP
+  sockets.
 - `fixtures/`: small Nim executables used by integration tests. They accept one
   request or datagram and exit, which keeps tests deterministic.
 

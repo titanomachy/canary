@@ -1,4 +1,4 @@
-import std/strutils
+import std/[strutils, times]
 import ../[common, input_contract, network_target]
 
 type
@@ -18,6 +18,9 @@ type
     dbPath*: string
     retries*: int
     recoveryThreshold*: int
+    cooldownSeconds*: int
+    repeatIntervalSeconds*: int
+    silenceUntil*: string
     asJson*: bool
 
   HttpConfig* = object
@@ -99,11 +102,32 @@ proc validateCheckId*(checkId: string) =
     if ord(character) < 32 or ord(character) == 127:
       raise newException(CanaryConfigError, "id must not contain control characters")
 
+proc parseSilenceUntil*(value: string): int64 =
+  ## Silence windows use an unambiguous UTC timestamp. `clear` explicitly
+  ## removes a previously persisted window; an empty value leaves it unchanged.
+  let normalized = value.strip()
+  if normalized.len == 0 or normalized.toLowerAscii() == "clear":
+    return 0
+  try:
+    result = parse(
+      normalized, "yyyy-MM-dd'T'HH:mm:ss'Z'", utc()
+    ).toTime().toUnix()
+  except TimeParseError, ValueError:
+    raise newException(
+      CanaryConfigError,
+      "silenceUntil must be a UTC timestamp like 2026-08-30T18:00:00Z or clear"
+    )
+
 proc validate*(config: CanaryConfig) =
   ## Validate a parser-independent configuration before executing a check.
   validateCheckId(config.common.checkId)
   validateRetries(config.common.retries)
   validateRecoveryThreshold(config.common.recoveryThreshold)
+  validateNotificationInterval("cooldown", config.common.cooldownSeconds)
+  validateNotificationInterval(
+    "repeatInterval", config.common.repeatIntervalSeconds
+  )
+  discard parseSilenceUntil(config.common.silenceUntil)
 
   case config.kind
   of ckHttp:

@@ -33,6 +33,13 @@ options. The default TOML path and supported keys are defined in
 [`configuration.md`](configuration.md). A target remains a required positional
 argument and cannot be supplied by TOML or the environment.
 
+Every check command accepts the common notifier controls `--cooldown SECONDS`,
+`--repeatInterval SECONDS`, and `--silenceUntil UTC_TIMESTAMP|clear`.
+Intervals are non-negative integers and default to `0` (disabled). The UTC
+timestamp format is exactly `yyyy-MM-ddTHH:mm:ssZ`. Silence is persisted by
+check ID; omitting the option leaves the stored window unchanged, while
+`clear` ends it. These options do not change the check result or exit code.
+
 The DNS command accepts `--type A|AAAA|CNAME|MX|TXT`, repeatable
 `--expected VALUE`, `--resolver IP[:PORT]`, and `--timeout MILLISECONDS`.
 Resolver IPv6 literals with a port use bracket notation. Every expected answer

@@ -6,6 +6,18 @@ All notable changes to Canary are documented in this file.
 
 ### Added
 
+- Per-check notification cooldowns through `--cooldown`, with transactional
+  catch-up alerts for outages that remain DOWN after the cooldown.
+- Periodic DOWN reminders through `--repeatInterval`; concurrent processes use
+  the state transaction to enqueue at most one due reminder.
+- Durable maintenance silences through `--silenceUntil UTC_TIMESTAMP`, plus
+  `clear` for early termination. Checks and thresholds continue during silence,
+  pending delivery is deferred, and an active outage alerts after the window.
+- Unit and CLI coverage for notifier interval validation, UTC parsing,
+  configuration precedence, reminder/cooldown timing, silence persistence,
+  deferred outbox work, stale alert cancellation, and concurrent reminder
+  deduplication.
+
 - Typed TOML configuration through `--config PATH` and the optional
   `$XDG_CONFIG_HOME/canary/config.toml` default path.
 - `CANARY_*` environment inputs for shared and command-specific defaults,
@@ -48,6 +60,12 @@ All notable changes to Canary are documented in this file.
   plus deterministic local HTTP and HTTPS phase-timing coverage.
 
 ### Changed
+
+- State rows now record notification timing, current-incident alert ownership,
+  and the persisted silence end; existing 0.1 databases migrate in place
+  without re-alerting already-DOWN legacy incidents.
+- Notification messages identify `ALERT`, `REMINDER`, or `RECOVERY` in addition
+  to the health transition.
 
 - Replaced `cligen` with a thin `nim-confutils` adapter; all execution still
   crosses the parser-independent `app.run(config)` boundary.

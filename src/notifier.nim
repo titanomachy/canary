@@ -201,11 +201,17 @@ proc sendTestNotifications*(provider: NotificationProvider,
     notifyUrls, "[TEST] Canary notification delivery test", timeoutMs
   )
 
-proc addColumnIfMissing(db: DbConn, tableName, definition: string) =
-  try:
-    db.exec("ALTER TABLE " & tableName & " ADD COLUMN " & definition)
-  except CatchableError:
-    discard
+proc hasColumn(db: DbConn, tableName, columnName: string): bool =
+  for row in db.all("PRAGMA table_info(" & tableName & ")"):
+    if row[1].fromDb(string) == columnName:
+      return true
+
+proc addColumnIfMissing(db: DbConn, tableName, definition: string): bool =
+  let columnName = definition.splitWhitespace()[0]
+  if db.hasColumn(tableName, columnName):
+    return false
+  db.exec("ALTER TABLE " & tableName & " ADD COLUMN " & definition)
+  true
 
 proc initializeStore(db: DbConn) =
   db.exec("PRAGMA busy_timeout = 5000;")
@@ -216,7 +222,10 @@ proc initializeStore(db: DbConn) =
       status TEXT NOT NULL,
       fail_count INTEGER NOT NULL DEFAULT 0,
       success_count INTEGER NOT NULL DEFAULT 0,
-      last_check INTEGER NOT NULL DEFAULT 0
+      last_check INTEGER NOT NULL DEFAULT 0,
+      last_notification INTEGER NOT NULL DEFAULT 0,
+      incident_alerted INTEGER NOT NULL DEFAULT 0,
+      silenced_until INTEGER NOT NULL DEFAULT 0
     );
     CREATE TABLE IF NOT EXISTS notification_outbox (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -228,14 +237,34 @@ proc initializeStore(db: DbConn) =
       next_attempt INTEGER NOT NULL DEFAULT 0,
       locked_at INTEGER,
       created_at INTEGER NOT NULL,
-      sent_at INTEGER
+      sent_at INTEGER,
+      event_kind TEXT NOT NULL DEFAULT 'TRANSITION'
     );
     CREATE INDEX IF NOT EXISTS notification_outbox_due
       ON notification_outbox(status, next_attempt);
   """)
   # Existing 0.1 databases are upgraded in place.
-  addColumnIfMissing(
+  discard addColumnIfMissing(
     db, "canary_state", "success_count INTEGER NOT NULL DEFAULT 0"
+  )
+  discard addColumnIfMissing(
+    db, "canary_state", "last_notification INTEGER NOT NULL DEFAULT 0"
+  )
+  let addedIncidentAlerted = addColumnIfMissing(
+    db, "canary_state", "incident_alerted INTEGER NOT NULL DEFAULT 0"
+  )
+  if addedIncidentAlerted:
+    # A legacy DOWN row already produced its transition alert under the 0.1
+    # contract. Preserve that ownership and avoid a duplicate after migration.
+    db.exec(
+      "UPDATE canary_state SET incident_alerted = 1 WHERE status = 'DOWN'"
+    )
+  discard addColumnIfMissing(
+    db, "canary_state", "silenced_until INTEGER NOT NULL DEFAULT 0"
+  )
+  discard addColumnIfMissing(
+    db, "notification_outbox",
+    "event_kind TEXT NOT NULL DEFAULT 'TRANSITION'"
   )
 
 proc legacyNotificationUrls(raw: string): seq[string] =
@@ -244,11 +273,16 @@ proc legacyNotificationUrls(raw: string): seq[string] =
     if target.len > 0:
       result.add(target)
 
-proc transitionMessage(jobId, transition: string, attempt, latencyMs: int,
-                       cause: string, timestamp: int64): string =
-  let prefix = if transition == "DOWN": "[ALERT]" else: "[RECOVERY]"
+proc transitionMessage(jobId, transition, eventKind: string,
+                       attempt, latencyMs: int, cause: string,
+                       timestamp: int64): string =
+  let prefix = case eventKind
+    of "REMINDER": "[REMINDER]"
+    elif transition == "DOWN": "[ALERT]"
+    else: "[RECOVERY]"
   result = prefix & " Canary: name=" & jobId & " transition=" & transition &
-    " attempt=" & $attempt & " latency_ms=" & $latencyMs &
+    " kind=" & eventKind & " attempt=" & $attempt &
+    " latency_ms=" & $latencyMs &
     " timestamp=" & fromUnix(timestamp).utc.format(
       "yyyy-MM-dd'T'HH:mm:ss'Z'"
     )
@@ -264,37 +298,48 @@ proc retryDelaySeconds*(eventId: int64, attempt: int): int64 =
   min(baseDelay + jitter, MaxRetryDelaySeconds)
 
 proc enqueueTransition(db: DbConn, jobId: string, targets: openArray[string],
-                       message: string,
+                       message, eventKind: string,
                        timestamp: int64) =
   for target in targets:
     if target.strip().len == 0:
       continue
     db.exec(
       "INSERT INTO notification_outbox(" &
-      "check_id, target, message, next_attempt, created_at" &
-      ") VALUES(?, ?, ?, ?, ?)",
-      jobId, target, message, timestamp, timestamp
+      "check_id, target, message, next_attempt, created_at, event_kind" &
+      ") VALUES(?, ?, ?, ?, ?, ?)",
+      jobId, target, message, timestamp, timestamp, eventKind
     )
 
 proc recordTransition(db: DbConn, jobId: string, isOk: bool,
                       notifyUrls: openArray[string], failureThreshold,
                       recoveryThreshold, latencyMs: int, cause: string,
-                      timestamp: int64) =
+                      cooldownSeconds, repeatIntervalSeconds: int,
+                      requestedSilenceUntil, timestamp: int64) =
   db.exec("BEGIN IMMEDIATE")
   var committed = false
   try:
     let rowOpt = db.one(
-      "SELECT status, fail_count, success_count FROM canary_state WHERE id = ?",
+      "SELECT status, fail_count, success_count, last_notification, " &
+      "incident_alerted, silenced_until FROM canary_state WHERE id = ?",
       jobId
     )
     var previousStatus = "UNKNOWN"
     var failCount = 0
     var successCount = 0
+    var lastNotification = 0'i64
+    var incidentAlerted = false
+    var silencedUntil = 0'i64
     if rowOpt.isSome:
       let row = rowOpt.get()
       previousStatus = row[0].fromDb(string)
       failCount = row[1].fromDb(int)
       successCount = row[2].fromDb(int)
+      lastNotification = row[3].fromDb(int64)
+      incidentAlerted = row[4].fromDb(int) != 0
+      silencedUntil = row[5].fromDb(int64)
+
+    if requestedSilenceUntil >= 0:
+      silencedUntil = requestedSilenceUntil
 
     var status = previousStatus
     var transition = ""
@@ -320,32 +365,77 @@ proc recordTransition(db: DbConn, jobId: string, isOk: bool,
         status = "DOWN"
         transition = "DOWN"
         transitionAttempt = failCount
+        incidentAlerted = false
       else:
         status = "PENDING_DOWN"
 
     if rowOpt.isNone:
       db.exec(
         "INSERT INTO canary_state(" &
-        "id, status, fail_count, success_count, last_check" &
-        ") VALUES(?, ?, ?, ?, ?)",
-        jobId, status, failCount, successCount, timestamp
+        "id, status, fail_count, success_count, last_check, " &
+        "last_notification, incident_alerted, silenced_until" &
+        ") VALUES(?, ?, ?, ?, ?, ?, ?, ?)",
+        jobId, status, failCount, successCount, timestamp, lastNotification,
+        ord(incidentAlerted), silencedUntil
       )
-    else:
-      db.exec(
-        "UPDATE canary_state SET status = ?, fail_count = ?, " &
-        "success_count = ?, last_check = ? WHERE id = ?",
-        status, failCount, successCount, timestamp, jobId
-      )
+    let silenced = silencedUntil > timestamp
+    var eventKind = ""
+    var eventTransition = transition
+    var eventAttempt = transitionAttempt
+    if status == "DOWN" and not isOk and not silenced and notifyUrls.len > 0:
+      let cooldownDue = lastNotification == 0 or
+        timestamp >= lastNotification + int64(cooldownSeconds)
+      if not incidentAlerted and cooldownDue:
+        eventKind = "ALERT"
+        eventTransition = "DOWN"
+        eventAttempt = failCount
+        incidentAlerted = true
+      elif incidentAlerted and repeatIntervalSeconds > 0 and cooldownDue and
+          timestamp >= lastNotification + int64(repeatIntervalSeconds):
+        eventKind = "REMINDER"
+        eventTransition = "DOWN"
+        eventAttempt = failCount
+    elif transition == "UP":
+      if incidentAlerted and not silenced and notifyUrls.len > 0:
+        eventKind = "RECOVERY"
+      elif silenced:
+        # A DOWN event deferred by this check's active silence must not be
+        # delivered after the service has already recovered.
+        db.exec(
+          "UPDATE notification_outbox SET status = 'cancelled' " &
+          "WHERE check_id = ? AND status = 'pending' AND " &
+          "event_kind IN ('ALERT', 'REMINDER')",
+          jobId
+        )
+      incidentAlerted = false
 
-    if transition.len > 0 and notifyUrls.len > 0:
+    if eventKind.len > 0 and notifyUrls.len > 0:
       enqueueTransition(
         db,
         jobId,
         notifyUrls,
         transitionMessage(
-          jobId, transition, transitionAttempt, latencyMs, cause, timestamp
+          jobId, eventTransition, eventKind, eventAttempt, latencyMs, cause,
+          timestamp
         ),
+        eventKind,
         timestamp
+      )
+      lastNotification = timestamp
+
+    if rowOpt.isSome:
+      db.exec(
+        "UPDATE canary_state SET status = ?, fail_count = ?, " &
+        "success_count = ?, last_check = ?, last_notification = ?, " &
+        "incident_alerted = ?, silenced_until = ? WHERE id = ?",
+        status, failCount, successCount, timestamp, lastNotification,
+        ord(incidentAlerted), silencedUntil, jobId
+      )
+    elif eventKind.len > 0:
+      db.exec(
+        "UPDATE canary_state SET last_notification = ?, " &
+        "incident_alerted = ? WHERE id = ?",
+        lastNotification, ord(incidentAlerted), jobId
       )
     db.exec("COMMIT")
     committed = true
@@ -361,12 +451,15 @@ proc claimEvent(db: DbConn, timestamp: int64): Option[ClaimedEvent] =
   var committed = false
   try:
     let rowOpt = db.one(
-      "SELECT id, target, message, attempt_count " &
-      "FROM notification_outbox " &
-      "WHERE (status = 'pending' AND next_attempt <= ?) " &
-      "OR (status = 'delivering' AND locked_at <= ?) " &
-      "ORDER BY created_at, id LIMIT 1",
-      timestamp, timestamp - OutboxLeaseSeconds
+      "SELECT outbox.id, outbox.target, outbox.message, " &
+      "outbox.attempt_count " &
+      "FROM notification_outbox AS outbox " &
+      "LEFT JOIN canary_state AS state ON state.id = outbox.check_id " &
+      "WHERE ((outbox.status = 'pending' AND outbox.next_attempt <= ?) " &
+      "OR (outbox.status = 'delivering' AND outbox.locked_at <= ?)) " &
+      "AND (state.silenced_until IS NULL OR state.silenced_until <= ?) " &
+      "ORDER BY outbox.created_at, outbox.id LIMIT 1",
+      timestamp, timestamp - OutboxLeaseSeconds, timestamp
     )
     if rowOpt.isSome:
       let row = rowOpt.get()
@@ -444,9 +537,16 @@ proc processStateAndNotify*(jobId: string, isOk: bool,
                             dbPath: string = "", failureThreshold: int = 1,
                             recoveryThreshold: int = 1,
                             latencyMs: int = 0, cause: string = "",
-                            sender: NotificationSender = nil): seq[DeliveryResult] =
+                            sender: NotificationSender = nil,
+                            cooldownSeconds: int = 0,
+                            repeatIntervalSeconds: int = 0,
+                            silenceUntil: int64 = -1,
+                            timestampOverride: int64 = 0): seq[DeliveryResult] =
   let finalDbPath = resolveDbPath(dbPath)
-  let timestamp = getTime().toUnix()
+  let timestamp = if timestampOverride == 0:
+    getTime().toUnix()
+  else:
+    timestampOverride
   try:
     let dir = parentDir(finalDbPath)
     if dir.len > 0:
@@ -456,7 +556,8 @@ proc processStateAndNotify*(jobId: string, isOk: bool,
     initializeStore(db)
     recordTransition(
       db, jobId, isOk, notifyUrls, failureThreshold, recoveryThreshold,
-      latencyMs, cause, timestamp
+      latencyMs, cause, cooldownSeconds, repeatIntervalSeconds, silenceUntil,
+      timestamp
     )
     result = deliverOutbox(db, sender, timestamp)
   except CatchableError:
@@ -469,12 +570,17 @@ proc processStateAndNotify*(jobId: string, isOk: bool, notifyUrl: string,
                             dbPath: string = "", failureThreshold: int = 1,
                             recoveryThreshold: int = 1,
                             latencyMs: int = 0, cause: string = "",
-                            sender: NotificationSender = nil): seq[DeliveryResult] =
+                            sender: NotificationSender = nil,
+                            cooldownSeconds: int = 0,
+                            repeatIntervalSeconds: int = 0,
+                            silenceUntil: int64 = -1,
+                            timestampOverride: int64 = 0): seq[DeliveryResult] =
   ## Compatibility overload for callers of the 0.1 API. The CLI and typed
   ## configuration model use a real sequence and never comma-split options.
   processStateAndNotify(
     jobId, isOk, legacyNotificationUrls(notifyUrl), dbPath, failureThreshold,
-    recoveryThreshold, latencyMs, cause, sender
+    recoveryThreshold, latencyMs, cause, sender, cooldownSeconds,
+    repeatIntervalSeconds, silenceUntil, timestampOverride
   )
 
 proc handleStateAndNotify*(jobId: string, isOk: bool, notifyUrl: string,

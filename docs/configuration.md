@@ -38,6 +38,9 @@ contains no credentials.
 ```toml
 retries = 2
 recoveryThreshold = 2
+cooldown = 900
+repeatInterval = 3600
+# silenceUntil = "2026-08-30T18:00:00Z"
 json = false
 db = "/var/lib/canary/state.db"
 # Store real URLs only in a protected, untracked file.
@@ -71,11 +74,15 @@ type = "A"
 # expected = ["192.0.2.10", "192.0.2.11"]
 ```
 
-The common keys are `id`, `notify`, `db`, `retries`, `recoveryThreshold`, and
-`json`. `notify` is a TOML array of notification URLs. `retries` is the failure
-threshold retained for CLI compatibility;
+The common keys are `id`, `notify`, `db`, `retries`, `recoveryThreshold`,
+`cooldown`, `repeatInterval`, `silenceUntil`, and `json`. `notify` is a TOML
+array of notification URLs. `retries` is the failure threshold retained for
+CLI compatibility;
 `recoveryThreshold` is the number of consecutive successful checks required to
-leave `DOWN`. Available command keys are:
+leave `DOWN`. `cooldown` and `repeatInterval` are non-negative seconds;
+zero disables each feature. `silenceUntil` is an absolute UTC timestamp such
+as `2026-08-30T18:00:00Z`, or `clear` to remove a persisted silence. Available
+command keys are:
 
 | Table | Keys |
 | --- | --- |
@@ -130,12 +137,40 @@ host and port need independent retry and notification state.
 ## Environment variables and secrets
 
 Environment names use the `CANARY_` prefix and the uppercased option name:
-`CANARY_RETRIES`, `CANARY_RECOVERYTHRESHOLD`, `CANARY_DB`, `CANARY_TIMEOUT`,
+`CANARY_RETRIES`, `CANARY_RECOVERYTHRESHOLD`, `CANARY_COOLDOWN`,
+`CANARY_REPEATINTERVAL`, `CANARY_SILENCEUNTIL`, `CANARY_DB`, `CANARY_TIMEOUT`,
 `CANARY_STATUS`, `CANARY_STATUSRANGE`, `CANARY_MAXLATENCY`, `CANARY_VERBOSE`, `CANARY_NOTIFY`,
 `CANARY_REQUEST`, `CANARY_EXPECTED`, `CANARY_TYPE`, `CANARY_RESOLVER`, and
 `CANARY_HEADERS`, for example. Camel-case
 option names do not gain an extra underscore: use `CANARY_MINDAYS` and
-`CANARY_MAXREDIRECTS`.
+`CANARY_MAXREDIRECTS`. The same rule gives `CANARY_REPEATINTERVAL` and
+`CANARY_SILENCEUNTIL`.
+
+## Notification scheduling and silence
+
+Notification scheduling belongs to the state identity, not to a process. Use a
+stable explicit `id` and the same SQLite database for every scheduled
+invocation. The stored values let concurrent Canary processes decide inside
+one `BEGIN IMMEDIATE` transaction whether a notification is due.
+
+`cooldown` is the minimum gap between DOWN-class notifications. It applies to
+a new flapping DOWN incident and to reminders, but not to recovery. If a DOWN
+transition occurs inside cooldown, the first check run after cooldown queues
+the catch-up alert if the service is still down. `repeatInterval` queues a
+reminder only on a failed run while the state remains `DOWN`; a successful
+sample below the recovery threshold does not create a misleading reminder. The
+effective gap is `max(cooldown, repeatInterval)`. These are run-driven timers,
+so actual delivery may be later than the requested interval by up to the check
+schedule interval.
+
+`silenceUntil` establishes a durable maintenance window. The current health
+state, failure threshold, and recovery threshold continue normally. New
+notifications for that check and delivery of its pending outbox rows are held
+until the UTC end. If the incident remains down, the first later run emits a
+catch-up alert. Recovery during the silence cancels an undelivered DOWN alert,
+and no recovery message is emitted for an incident that was never announced.
+Omitting `silenceUntil` on later runs preserves the stored end time. Pass
+`--silenceUntil clear` (or configure `silenceUntil = "clear"`) to end it early.
 
 Prefer the environment for notification URLs, bearer tokens, and authorization
 headers so they are absent from shared process listings and checked-in TOML:
