@@ -40,8 +40,9 @@ DOWN + success ──────────────────> UP + reco
 
 ## Integration fixtures
 
-`tests/fixtures/local_server.nim` binds only to `127.0.0.1` on a kernel-assigned
-port. It serves one local protocol exchange and exits. Its modes provide:
+`tests/fixtures/local_server.nim` binds to `127.0.0.1` by default or `::1` with
+`--ipv6`, always on a kernel-assigned port. It serves one local protocol
+exchange and exits. Its modes provide:
 
 - successful and mismatching HTTP responses;
 - matching and mismatching UDP replies;
@@ -52,13 +53,16 @@ port. It serves one local protocol exchange and exits. Its modes provide:
   redaction.
 - a generated, short-lived self-signed certificate served over loopback to
   exercise both real OpenSSL invocations and expiration parsing.
+- IPv6 HTTP, TCP, UDP, DNS-resolver, and TLS exchanges; ICMP IPv6 argument
+  selection is covered with an exact process-runner contract.
 
 The timeout scenarios use short, bounded local waits. The concurrency test
 starts eight `state_worker` processes against one state row and verifies that
 the transactionally updated failure count contains every write.
 
 The CLI suite verifies help, version, parser and application exit codes, missing
-and invalid TOML, the optional default path, typed validation, precedence, and
-independent explicit state IDs. It also forces a webhook connection failure
-with userinfo, a secret path, and a query token, then verifies that stderr
-contains only the public notification host.
+and invalid TOML, the optional default path, typed validation, precedence,
+independent explicit state IDs, and an IPv6 TCP result through the public JSON
+contract. It also forces a webhook connection failure with userinfo, a secret
+path, and a query token, then verifies that stderr contains only the public
+notification host.

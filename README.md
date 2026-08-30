@@ -295,6 +295,38 @@ in that response.
 
 ---
 
+## IPv6
+
+Every network check supports IPv6 literals. HTTP and HTTPS URLs use standard
+bracket notation. Host arguments for TCP, UDP, TLS, DNS, and ICMP accept either
+the bare literal or brackets; output that combines an address and port always
+uses `[address]:port` so it remains unambiguous.
+
+```bash
+# HTTP over IPv6
+./canary http 'http://[2001:db8::10]:8080/health'
+
+# TCP and UDP host arguments
+./canary tcp 2001:db8::20 --port 443
+./canary udp '[2001:db8::53]' --port 9000 --payload ping
+
+# Query through an IPv6 DNS resolver on a custom port
+./canary dns example.com --type AAAA \
+  --resolver '[2001:db8::53]:5353' --expected '2001:db8::10'
+
+# TLS and ICMP literals
+./canary ssl 'https://[2001:db8::30]/'
+./canary icmp 2001:db8::40
+```
+
+TCP tries the IPv4 and IPv6 addresses returned by the system resolver within
+one check deadline. UDP sends the probe through every resolved address family
+and accepts the first response. An IPv6 ICMP literal selects `ping -6`
+explicitly; hostname targets retain the resolver behavior of the installed
+Linux `ping` implementation.
+
+---
+
 ## SQLite State Tracking & Flapping Protection
 
 State tracking is opt-in through `--db`, `CANARY_DB`, or `--notify`. Without one

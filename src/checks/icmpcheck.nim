@@ -1,5 +1,5 @@
-import std/times
-import ../[common, input_contract, process_runner]
+import std/[net, times]
+import ../[common, input_contract, network_target, process_runner]
 
 proc checkIcmp*(host: string, count: int = 1, timeoutMs: int = 5000,
                 runner: ProcessRunner = nil): CheckResult =
@@ -7,6 +7,7 @@ proc checkIcmp*(host: string, count: int = 1, timeoutMs: int = 5000,
   validateHostname(host)
   validatePacketCount(count)
   validateCommon(timeoutMs, 1)
+  let networkHost = normalizedNetworkHost(host)
 
   when not defined(linux):
     raise newException(
@@ -15,12 +16,21 @@ proc checkIcmp*(host: string, count: int = 1, timeoutMs: int = 5000,
     )
   else:
     let execute = if runner.isNil: runProcess else: runner
+    var args: seq[string]
+    try:
+      if parseIpAddress(networkHost).family == IpAddressFamily.IPv6:
+        args.add("-6")
+    except ValueError:
+      discard
+    args.add(@[
+      "-c", $count, "-W", $max(1, timeoutMs div 1000), networkHost
+    ])
     let startTime = epochTime()
     var execution: ProcessResult
     try:
       execution = execute(
         "ping",
-        @["-c", $count, "-W", $max(1, timeoutMs div 1000), host],
+        args,
         "",
         timeoutMs
       )
@@ -32,21 +42,23 @@ proc checkIcmp*(host: string, count: int = 1, timeoutMs: int = 5000,
 
     let durationMs = int((epochTime() - startTime) * 1000)
     if execution.timedOut:
-      let msg = "ICMP TIMEOUT - " & host & " - After " & $durationMs & "ms"
+      let msg = "ICMP TIMEOUT - " & networkHost & " - After " &
+        $durationMs & "ms"
       return CheckResult(
-        kind: "icmp", target: host, isOk: false, message: msg,
+        kind: "icmp", target: networkHost, isOk: false, message: msg,
         latencyMs: durationMs, details: "Timeout"
       )
     if execution.exitCode == 0:
-      let msg = "ICMP OK - " & host & " - Latency: " & $durationMs & "ms"
+      let msg = "ICMP OK - " & networkHost & " - Latency: " &
+        $durationMs & "ms"
       return CheckResult(
-        kind: "icmp", target: host, isOk: true, message: msg,
+        kind: "icmp", target: networkHost, isOk: true, message: msg,
         latencyMs: durationMs
       )
 
-    let msg = "ICMP ERROR - " & host & " unreachable - Latency: " &
+    let msg = "ICMP ERROR - " & networkHost & " unreachable - Latency: " &
       $durationMs & "ms"
     CheckResult(
-      kind: "icmp", target: host, isOk: false, message: msg,
+      kind: "icmp", target: networkHost, isOk: false, message: msg,
       latencyMs: durationMs, details: "Ping failed"
     )

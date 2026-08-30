@@ -88,6 +88,11 @@ leave `DOWN`. Available command keys are:
 Targets (`url` or `host`) are intentionally not loaded from TOML or the
 environment. Supply exactly one target after the command.
 
+IPv6 URL targets use bracket notation, for example
+`http://[2001:db8::10]:8080/health`. Host arguments accept a bare IPv6 literal
+or a bracketed one. Resolver values with a custom port must use brackets, such
+as `[2001:db8::53]:5353`, to separate the address from the port.
+
 `status` checks one exact HTTP code. A non-empty `statusRange` replaces it and
 accepts a comma-separated combination of exact codes (`204`), inclusive ranges
 (`200-299`), and classes (`2xx`). `responseHeader = "Name"` checks presence;

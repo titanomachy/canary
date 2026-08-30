@@ -1,5 +1,5 @@
 import std/[strutils, times]
-import ../[common, input_contract, process_runner]
+import ../[common, input_contract, network_target, process_runner]
 
 proc firstCertificate(output: string): string =
   const
@@ -26,6 +26,7 @@ proc checkSsl*(hostOrUrl: string, minDays: int = 14, port: int = 443,
   ## OpenSSL remains a temporary 0.1.x dependency, but neither invocation uses
   ## a shell, redirection, or a pipeline.
   let hostname = hostnameFromSslTarget(hostOrUrl)
+  let target = formatHostPort(hostname, port)
   validatePort(port)
   validateCommon(timeoutMs, 1)
   if minDays < 0:
@@ -58,19 +59,19 @@ proc checkSsl*(hostOrUrl: string, minDays: int = 14, port: int = 443,
 
     let latency = int((epochTime() - startTime) * 1000)
     if handshake.timedOut:
-      let msg = "SSL TIMEOUT - " & hostname & ":" & $port & " - After " &
+      let msg = "SSL TIMEOUT - " & target & " - After " &
         $latency & "ms"
       return CheckResult(
-        kind: "ssl", target: hostname & ":" & $port, isOk: false,
+        kind: "ssl", target: target, isOk: false,
         message: msg, latencyMs: latency, details: "Timeout"
       )
 
     let certificate = firstCertificate(handshake.output)
     if handshake.exitCode != 0 or certificate.len == 0:
-      let msg = "SSL ERROR - " & hostname & ":" & $port &
+      let msg = "SSL ERROR - " & target &
         " failed to fetch TLS certificate"
       return CheckResult(
-        kind: "ssl", target: hostname & ":" & $port, isOk: false,
+        kind: "ssl", target: target, isOk: false,
         message: msg, latencyMs: latency, details: "TLS handshake failed"
       )
 
@@ -85,10 +86,10 @@ proc checkSsl*(hostOrUrl: string, minDays: int = 14, port: int = 443,
         "SSL check requires the 'openssl' executable on PATH"
       )
     if inspection.timedOut:
-      let msg = "SSL TIMEOUT - " & hostname & ":" & $port &
+      let msg = "SSL TIMEOUT - " & target &
         " while inspecting certificate"
       return CheckResult(
-        kind: "ssl", target: hostname & ":" & $port, isOk: false,
+        kind: "ssl", target: target, isOk: false,
         message: msg, latencyMs: latency, details: "Timeout"
       )
     if inspection.exitCode != 0 or "notAfter=" notin inspection.output:

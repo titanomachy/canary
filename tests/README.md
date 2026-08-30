@@ -31,11 +31,12 @@ The test layers are:
   result formatting, redaction, direct
   helper-process arguments/timeouts, check IDs, and the complete SQLite
   state-transition table. Every state test owns a temporary database.
-- `integration/test_integration.nim`: local HTTP, UDP, TLS, and webhook servers
-  on random ports plus a multiprocess SQLite concurrency test.
+- `integration/test_integration.nim`: local HTTP, TCP, UDP, DNS, TLS, and
+  webhook servers on random ports, IPv6 loopback coverage for every socket
+  transport, plus a multiprocess SQLite concurrency test.
 - `cli/test_cli.nim`: black-box coverage of the public behavior in
   `docs/cli-contract.md`, including config paths, precedence, typed errors, and
-  explicit state identity, using local TCP sockets.
+  explicit state identity, using local IPv4 and IPv6 TCP sockets.
 - `fixtures/`: small Nim executables used by integration tests. They accept one
   request or datagram and exit, which keeps tests deterministic.
 

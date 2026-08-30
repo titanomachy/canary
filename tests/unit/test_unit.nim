@@ -1,6 +1,7 @@
 import nim_sqlite
 import std/[httpcore, json, net, options, os, strutils, unittest]
-import ../../src/[common, input_contract, notifier, process_runner]
+import ../../src/[common, input_contract, network_target, notifier,
+                    process_runner]
 import ../../src/canary/[app, cli, config]
 import ../../src/checks/[dnscheck, httpcheck, icmpcheck, sslcheck]
 import ../test_support
@@ -85,7 +86,9 @@ suite "input parsing and validation":
       validateRecoveryThreshold(0)
 
   test "hostnames and expected DNS addresses are validated":
-    for hostname in ["localhost", "service.example.test", "127.0.0.1", "::1"]:
+    for hostname in [
+      "localhost", "service.example.test", "127.0.0.1", "::1", "[::1]"
+    ]:
       validateHostname(hostname)
     for hostname in ["", " bad.example", "bad host", "host;touch-pwned"]:
       expect CanaryConfigError:
@@ -94,6 +97,13 @@ suite "input parsing and validation":
     validateExpectedIp("2001:db8::1")
     expect CanaryConfigError:
       validateExpectedIp("not-an-address")
+
+  test "IPv6 host arguments and endpoint labels use canonical brackets":
+    check normalizedNetworkHost("::1") == "::1"
+    check normalizedNetworkHost("[2001:db8::1]") == "2001:db8::1"
+    check formatHostPort("2001:db8::1", 443) == "[2001:db8::1]:443"
+    check formatHostPort("[::1]", 9000) == "[::1]:9000"
+    check formatHostPort("example.test", 443) == "example.test:443"
 
   test "TCP probe payloads are bounded":
     validateTcpProbe("PING\r\n", "PONG")
@@ -129,8 +139,16 @@ suite "input parsing and validation":
     expect CatchableError:
       discard parseDnsResponse("too short", 1234, "A")
 
+  test "a bracketed IPv6 literal is a valid local AAAA target":
+    let result = checkDns("[::1]", "AAAA", @["::1"], timeoutMs = 100)
+    check result.isOk
+    check result.target == "::1"
+
   test "SSL targets are normalized and validated":
     check hostnameFromSslTarget("example.test") == "example.test"
+    check hostnameFromSslTarget("[::1]") == "::1"
+    check hostnameFromSslTarget("https://[2001:db8::10]/health") ==
+      "2001:db8::10"
     check hostnameFromSslTarget("https://user:secret@example.test/path?token=x") ==
       "example.test"
     expect CanaryConfigError:
@@ -295,6 +313,19 @@ suite "typed application configuration":
     check explicit.resolvedCheckId() == "production-api"
     expect CanaryConfigError:
       validateCheckId("bad\nid")
+
+  test "bracketed and bare IPv6 hosts share generated state identities":
+    let bare = CanaryConfig(
+      kind: ckTcp,
+      common: commonOptions,
+      tcpConfig: TcpConfig(host: "::1", port: 443, timeoutMs: 100)
+    )
+    let bracketed = CanaryConfig(
+      kind: ckTcp,
+      common: commonOptions,
+      tcpConfig: TcpConfig(host: "[::1]", port: 443, timeoutMs: 100)
+    )
+    check bare.resolvedCheckId() == bracketed.resolvedCheckId()
 
   test "app execution accepts config without a CLI parser":
     let server = newSocket()
@@ -489,6 +520,18 @@ suite "argument-safe system checks":
     check called
     check result.isOk
 
+  test "ICMP selects IPv6 explicitly and removes address brackets":
+    let runner: ProcessRunner = proc(command: string, args: seq[string],
+                                     input: string,
+                                     timeoutMs: int): ProcessResult =
+      check command == "ping"
+      check args == @["-6", "-c", "1", "-W", "1", "::1"]
+      check input.len == 0
+      check timeoutMs == 1000
+      ProcessResult(exitCode: 0)
+    let result = checkIcmp("[::1]", 1, 1000, runner)
+    check result.isOk
+
   test "ICMP rejects command fragments before starting a process":
     var called = false
     let runner: ProcessRunner = proc(command: string, args: seq[string],
@@ -528,6 +571,28 @@ suite "argument-safe system checks":
     check calls[1].args == @["x509", "-noout", "-enddate"]
     check calls[1].input == Certificate
     check "secret" notin formatResult(result, true)
+
+  test "SSL formats an IPv6 connection target with brackets":
+    const Certificate = "-----BEGIN CERTIFICATE-----\nfixture\n" &
+      "-----END CERTIFICATE-----\n"
+    var handshakeArgs: seq[string]
+    let runner: ProcessRunner = proc(command: string, args: seq[string],
+                                     input: string,
+                                     timeoutMs: int): ProcessResult =
+      if args[0] == "s_client":
+        handshakeArgs = args
+        ProcessResult(output: Certificate, exitCode: 0)
+      else:
+        ProcessResult(
+          output: "notAfter=Aug 29 12:00:00 2099 GMT\n", exitCode: 0
+        )
+    let result = checkSsl("https://[2001:db8::10]/health", 14, 8443,
+                          1000, runner)
+    check result.isOk
+    check handshakeArgs == @[
+      "s_client", "-connect", "[2001:db8::10]:8443", "-servername",
+      "2001:db8::10", "-showcerts"
+    ]
 
   test "a failed TLS handshake is a completed DOWN check":
     let runner: ProcessRunner = proc(command: string, args: seq[string],

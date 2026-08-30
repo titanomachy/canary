@@ -37,6 +37,9 @@ All notable changes to Canary are documented in this file.
   fallback for truncated replies, and deterministic local coverage.
 - Optional TCP request transmission and expected response or server-banner
   matching, bounded by one total deadline and deterministic local fixtures.
+- IPv6 support across HTTP(S), TCP, UDP, DNS resolver transport, TLS, and ICMP,
+  with dual-stack address resolution, canonical bracketed endpoints, and local
+  IPv6 loopback coverage.
 
 ### Changed
 
@@ -53,6 +56,8 @@ All notable changes to Canary are documented in this file.
 - UDP checks now require a response before the timeout and enforce `--expected`.
 - TCP checks retain connect-only behavior by default, while `--request` and
   `--expected` enable application-level probes without logging probe contents.
+- TCP now tries resolved IPv4 and IPv6 endpoints within one deadline, while UDP
+  probes every resolved address family and accepts the first response.
 - Webhook delivery now treats non-2xx responses and timeouts as failures without
   changing the health-check exit code.
 - ICMP now has a bounded `--timeout` and invokes `ping` directly with an argv

@@ -197,6 +197,51 @@ suite "local TCP checks":
     check elapsed < 1000
     server.waitForSuccess()
 
+suite "IPv6 loopback checks":
+  test "HTTP accepts a bracketed IPv6 URL":
+    var server = startLocalServer("http-ok", ["--ipv6"])
+    defer: server.stop()
+    let result = checkHttp(
+      "http://[::1]:" & $server.port & "/health",
+      timeoutMs = 1000,
+      search = "fixture-ok"
+    )
+    check result.isOk
+    check result.target == "http://[::1]:" & $server.port & "/health"
+    server.waitForSuccess()
+
+  test "TCP connects and matches a response over IPv6":
+    var server = startLocalServer(
+      "tcp-request",
+      ["--ipv6", "--expected-request=PING", "--response=PONG over IPv6"]
+    )
+    defer: server.stop()
+    let result = checkTcp("::1", server.port, 1000, "PING", "IPv6")
+    check result.isOk
+    check result.target == "[::1]:" & $server.port
+    server.waitForSuccess()
+
+  test "UDP receives and matches a response over IPv6":
+    var server = startLocalServer(
+      "udp-echo", ["--ipv6", "--response=pong:ipv6"]
+    )
+    defer: server.stop()
+    let result = checkUdp("[::1]", server.port, "ping", "ipv6", 1000)
+    check result.isOk
+    check result.target == "[::1]:" & $server.port
+    server.waitForSuccess()
+
+  test "DNS queries an IPv6 resolver transport":
+    var server = startLocalServer("dns", ["--ipv6"])
+    defer: server.stop()
+    let result = checkDns(
+      "fixture.test", "AAAA", @["2001:db8::10"],
+      "[::1]:" & $server.port, 1000
+    )
+    check result.isOk
+    check "2001:db8::10" in result.details
+    server.waitForSuccess()
+
 suite "local DNS checks":
   test "all supported record types are decoded through a chosen resolver":
     let cases = @[
@@ -317,6 +362,17 @@ suite "local TLS certificate check":
     check result.isOk
     check result.details.startsWith("Expiration:")
     server.waitForSuccess()
+
+    var ipv6Server = startLocalServer(
+      "tls", ["--ipv6", "--cert=" & certFile, "--key=" & keyFile]
+    )
+    defer: ipv6Server.stop()
+    let ipv6Result = checkSsl(
+      "https://[::1]/", 0, ipv6Server.port, 2000
+    )
+    check ipv6Result.isOk
+    check ipv6Result.target == "::1"
+    ipv6Server.waitForSuccess()
 
 suite "SQLite multiprocess concurrency":
   test "concurrent failures update one shared state row without lost writes":

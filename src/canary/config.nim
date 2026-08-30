@@ -1,5 +1,5 @@
 import std/strutils
-import ../[common, input_contract]
+import ../[common, input_contract, network_target]
 
 type
   CheckKind* = enum
@@ -161,20 +161,30 @@ proc resolvedCheckId*(config: CanaryConfig): string =
   of ckHttp:
     makeCheckId("http", config.httpConfig.url)
   of ckSsl:
-    makeCheckId("ssl", config.sslConfig.host, config.sslConfig.port)
+    makeCheckId(
+      "ssl", normalizedNetworkHost(config.sslConfig.host),
+      config.sslConfig.port
+    )
   of ckTcp:
-    makeCheckId("tcp", config.tcpConfig.host, config.tcpConfig.port)
+    makeCheckId(
+      "tcp", normalizedNetworkHost(config.tcpConfig.host),
+      config.tcpConfig.port
+    )
   of ckUdp:
-    makeCheckId("udp", config.udpConfig.host, config.udpConfig.port)
+    makeCheckId(
+      "udp", normalizedNetworkHost(config.udpConfig.host),
+      config.udpConfig.port
+    )
   of ckDns:
     let dns = config.dnsConfig
     let normalizedType = normalizedDnsRecordType(dns.recordType)
     if normalizedType == "A" and dns.resolver.len == 0:
-      makeCheckId("dns", dns.host)
+      makeCheckId("dns", normalizedNetworkHost(dns.host))
     else:
       makeCheckId(
         "dns_" & normalizedType.toLowerAscii(),
-        dns.host & (if dns.resolver.len > 0: "_" & dns.resolver else: "")
+        normalizedNetworkHost(dns.host) &
+          (if dns.resolver.len > 0: "_" & dns.resolver else: "")
       )
   of ckIcmp:
-    makeCheckId("icmp", config.icmpConfig.host)
+    makeCheckId("icmp", normalizedNetworkHost(config.icmpConfig.host))

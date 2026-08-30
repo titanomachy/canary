@@ -29,6 +29,9 @@ Linux is the only supported platform for `0.1.x`.
 - No helper command uses shell evaluation, redirection, command substitution, or
   a pipeline.
 - Helper execution is bounded by the configured timeout.
+- IPv6 literals remain single argv elements. ICMP removes optional address
+  brackets and adds the fixed `-6` flag; TLS formats its OpenSSL connection
+  target as `[address]:port` without invoking a shell.
 
 OpenSSL is a temporary runtime dependency for the TLS expiry check. Replacing it
 with a TLS-library implementation remains a future architectural improvement,

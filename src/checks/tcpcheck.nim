@@ -1,5 +1,5 @@
 import std/[monotimes, nativesockets, net, oserrors, strutils, times]
-import ../[common, input_contract]
+import ../[common, input_contract, network_target]
 
 const TcpReadChunkBytes = 4096
 
@@ -51,6 +51,35 @@ proc receiveExpected(socket: Socket, expected: string,
       return (true, response.len)
   (false, response.len)
 
+proc connectBeforeDeadline(host: string, port: int, startTime: MonoTime,
+                           timeoutMs: int): Socket =
+  ## Try every address family returned by the system resolver while preserving
+  ## one deadline for the complete TCP probe.
+  let endpoints = resolveNetworkEndpoints(
+    host, port, SOCK_STREAM, IPPROTO_TCP
+  )
+  for endpoint in endpoints:
+    var candidate: Socket
+    try:
+      candidate = newSocket(endpoint.domain, SOCK_STREAM, IPPROTO_TCP)
+      candidate.connect(
+        endpoint.address,
+        Port(port),
+        remainingMilliseconds(startTime, timeoutMs)
+      )
+      return candidate
+    except TimeoutError:
+      if candidate != nil:
+        candidate.close()
+      raise
+    except OSError, IOError:
+      if candidate != nil:
+        candidate.close()
+
+  if elapsedMilliseconds(startTime) >= timeoutMs:
+    raise newException(TimeoutError, "TCP probe timed out")
+  raise newException(IOError, "TCP connection failed")
+
 proc checkTcp*(host: string, port: int, timeoutMs: int = 5000,
                request: string = "", expected: string = ""): CheckResult =
   ## Connect, optionally send a request, and optionally match a response. An
@@ -59,14 +88,13 @@ proc checkTcp*(host: string, port: int, timeoutMs: int = 5000,
   validatePort(port)
   validateCommon(timeoutMs, 1)
   validateTcpProbe(request, expected)
-  let target = host & ":" & $port
+  let target = formatHostPort(host, port)
   let startTime = getMonoTime()
   var sock: Socket
   var connected = false
 
   try:
-    sock = newSocket()
-    sock.connect(host, Port(port), timeoutMs)
+    sock = connectBeforeDeadline(host, port, startTime, timeoutMs)
     connected = true
     if request.len > 0:
       sock.sendBeforeDeadline(request, startTime, timeoutMs)

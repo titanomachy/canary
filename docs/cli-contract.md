@@ -44,6 +44,14 @@ substring; without a request it matches server-first banners. `--timeout`
 bounds the complete connect, send, and receive sequence. Omitting both values
 retains the established connect-only behavior.
 
+All six network checks accept IPv6. HTTP(S) targets use bracketed URL
+authorities such as `http://[::1]:8080/health`. TCP, UDP, SSL, and ICMP host
+arguments accept bare (`::1`) or bracketed (`[::1]`) literals. A displayed
+TCP/UDP endpoint always uses `[address]:port`. DNS resolver literals with a
+custom port use `[address]:port`, as described above. TCP tries resolved IPv4
+and IPv6 addresses within its one total deadline; UDP probes every resolved
+address family and accepts the first response.
+
 Notification delivery can be checked separately with:
 
 ```text
@@ -85,5 +93,5 @@ the invalid input are stable.
 The black-box suite in `tests/cli/test_cli.nim` launches the compiled Canary
 executable as a child process and observes only its arguments, exit status,
 stdout, stderr, and explicitly requested state rows. Local TCP sockets provide
-deterministic `UP`, `DOWN`, JSON, and state-identity checks without internet
-access.
+deterministic IPv4/IPv6 `UP`, `DOWN`, JSON, and state-identity checks without
+internet access.

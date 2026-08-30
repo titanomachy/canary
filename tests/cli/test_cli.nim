@@ -371,6 +371,22 @@ suite "Canary CLI compatibility contract":
     )
     server.waitForSuccess()
 
+  test "an IPv6 TCP target works through the CLI and JSON contract":
+    var server = startLocalServer(
+      "tcp-banner", ["--ipv6", "--response=IPv6 ready"]
+    )
+    defer: server.stop()
+    let result = runCanary([
+      "tcp", "::1", "--port", $server.port, "--expected", "IPv6",
+      "--timeout", "1000", "--json"
+    ])
+    result.describe()
+    check result.exitCode == ExitUp
+    let payload = parseJson(result.stdout)
+    check payload["target"].getStr() == "[::1]:" & $server.port
+    check payload["status"].getStr() == "UP"
+    server.waitForSuccess()
+
   test "refused connection is a completed DOWN check":
     let (reservation, port) = reservedPort()
     defer: reservation.close()

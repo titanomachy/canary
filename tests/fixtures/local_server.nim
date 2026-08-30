@@ -4,6 +4,14 @@ proc announce(port: Port) =
   stdout.writeLine($port)
   stdout.flushFile()
 
+proc fixtureHost(ipv6: bool): string =
+  if ipv6: "::1" else: "127.0.0.1"
+
+proc fixtureSocket(ipv6: bool, sockType: SockType = SOCK_STREAM,
+                   protocol: Protocol = IPPROTO_TCP): Socket =
+  let domain = if ipv6: AF_INET6 else: AF_INET
+  newSocket(domain, sockType, protocol)
+
 proc readHttpRequest(client: Socket): string =
   result = client.recvLine(2000) & "\n"
   var contentLength = 0
@@ -17,11 +25,11 @@ proc readHttpRequest(client: Socket): string =
   if contentLength > 0:
     result.add(client.recv(contentLength, 2000))
 
-proc serveHttp(mode: string, delayMs: int) =
-  let server = newSocket()
+proc serveHttp(mode: string, delayMs: int, ipv6: bool) =
+  let server = fixtureSocket(ipv6)
   defer: server.close()
   server.setSockOpt(OptReuseAddr, true)
-  server.bindAddr(Port(0), "127.0.0.1")
+  server.bindAddr(Port(0), fixtureHost(ipv6))
   server.listen()
   announce(server.getLocalAddr()[1])
 
@@ -63,10 +71,10 @@ proc serveHttp(mode: string, delayMs: int) =
                  "Connection: close\r\n\r\n" & body
   client.send(response)
 
-proc serveUdp(response: string) =
-  let server = newSocket(AF_INET, SOCK_DGRAM, IPPROTO_UDP)
+proc serveUdp(response: string, ipv6: bool) =
+  let server = fixtureSocket(ipv6, SOCK_DGRAM, IPPROTO_UDP)
   defer: server.close()
-  server.bindAddr(Port(0), "127.0.0.1")
+  server.bindAddr(Port(0), fixtureHost(ipv6))
   announce(server.getLocalAddr()[1])
 
   var payload = ""
@@ -75,11 +83,12 @@ proc serveUdp(response: string) =
   discard server.recvFrom(payload, 65_535, clientHost, clientPort)
   server.sendTo(clientHost, clientPort, response)
 
-proc serveTcp(mode, response, expectedRequest: string, delayMs: int) =
-  let server = newSocket()
+proc serveTcp(mode, response, expectedRequest: string, delayMs: int,
+              ipv6: bool) =
+  let server = fixtureSocket(ipv6)
   defer: server.close()
   server.setSockOpt(OptReuseAddr, true)
-  server.bindAddr(Port(0), "127.0.0.1")
+  server.bindAddr(Port(0), fixtureHost(ipv6))
   server.listen()
   announce(server.getLocalAddr()[1])
 
@@ -122,10 +131,10 @@ proc dnsAnswer(recordType: int, data: string): string =
   result.addUint16(data.len)
   result.add(data)
 
-proc serveDns(delayMs: int) =
-  let server = newSocket(AF_INET, SOCK_DGRAM, IPPROTO_UDP)
+proc serveDns(delayMs: int, ipv6: bool) =
+  let server = fixtureSocket(ipv6, SOCK_DGRAM, IPPROTO_UDP)
   defer: server.close()
-  server.bindAddr(Port(0), "127.0.0.1")
+  server.bindAddr(Port(0), fixtureHost(ipv6))
   announce(server.getLocalAddr()[1])
 
   var query = ""
@@ -185,17 +194,17 @@ proc serveDns(delayMs: int) =
     response.add(answer)
   server.sendTo(clientHost, clientPort, response)
 
-proc serveTls(certFile: string, keyFile: string) =
+proc serveTls(certFile: string, keyFile: string, ipv6: bool) =
   let context = newContext(
     verifyMode = CVerifyNone,
     certFile = certFile,
     keyFile = keyFile
   )
-  let server = newSocket()
+  let server = fixtureSocket(ipv6)
   defer: server.close()
   context.wrapSocket(server)
   server.setSockOpt(OptReuseAddr, true)
-  server.bindAddr(Port(0), "127.0.0.1")
+  server.bindAddr(Port(0), fixtureHost(ipv6))
   server.listen()
   announce(server.getLocalAddr()[1])
 
@@ -208,7 +217,7 @@ proc usage() {.noreturn.} =
     "usage: local_server <http-ok|http-json|http-missing|webhook-ok|" &
     "webhook-fail|webhook-slow|tcp-banner|tcp-request|tcp-silent|" &
     "udp-echo|dns|tls> [--delay-ms=N] [--response=TEXT] " &
-    "[--expected-request=TEXT] [--cert=PATH] [--key=PATH]"
+    "[--expected-request=TEXT] [--cert=PATH] [--key=PATH] [--ipv6]"
   )
   quit(2)
 
@@ -219,6 +228,7 @@ when isMainModule:
   var expectedRequest = "PING\r\n"
   var certFile = ""
   var keyFile = ""
+  var ipv6 = false
   for kind, key, value in getopt():
     case kind
     of cmdArgument:
@@ -233,22 +243,23 @@ when isMainModule:
       of "expected-request": expectedRequest = value
       of "cert": certFile = value
       of "key": keyFile = value
+      of "ipv6": ipv6 = true
       else: usage()
     of cmdEnd:
       discard
 
   if mode == "udp-echo":
-    serveUdp(response)
+    serveUdp(response, ipv6)
   elif mode in ["tcp-banner", "tcp-request", "tcp-silent"]:
-    serveTcp(mode, response, expectedRequest, delayMs)
+    serveTcp(mode, response, expectedRequest, delayMs, ipv6)
   elif mode == "dns":
-    serveDns(delayMs)
+    serveDns(delayMs, ipv6)
   elif mode == "tls" and certFile.len > 0 and keyFile.len > 0:
-    serveTls(certFile, keyFile)
+    serveTls(certFile, keyFile, ipv6)
   elif mode in [
     "http-ok", "http-json", "http-missing", "webhook-ok", "webhook-fail",
     "webhook-slow"
   ]:
-    serveHttp(mode, delayMs)
+    serveHttp(mode, delayMs, ipv6)
   else:
     usage()

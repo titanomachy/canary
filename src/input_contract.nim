@@ -1,5 +1,6 @@
 import std/[net, re, strutils, uri]
 import common
+import network_target
 
 const
   MinHttpStatus = 100
@@ -184,7 +185,7 @@ proc hostnameFromSslTarget*(target: string): string =
     except UriParseError:
       configError("SSL target must be a hostname or an http(s) URL")
   else:
-    result = target
+    result = normalizedNetworkHost(target)
   validateHostname(result)
 
 proc validateHttpHeaders*(rawHeaders: string) =

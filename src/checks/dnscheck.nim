@@ -1,6 +1,6 @@
 import std/[algorithm, asyncdispatch, asyncnet, monotimes, net, strutils,
             sysrand, times]
-import ../[common, input_contract]
+import ../[common, input_contract, network_target]
 
 type DnsProtocolError = object of CatchableError
 
@@ -301,6 +301,7 @@ proc checkDns*(hostname: string, recordType: string = "A",
   ## expected value. Additional answers are allowed.
   validateHostname(hostname)
   validateCommon(timeoutMs, 1)
+  let target = normalizedNetworkHost(hostname)
   let normalizedType = normalizedDnsRecordType(recordType)
   validateDnsExpectedValues(normalizedType, expectedValues)
   let configuredResolver = splitDnsResolver(resolver)
@@ -312,10 +313,10 @@ proc checkDns*(hostname: string, recordType: string = "A",
   try:
     var values: seq[string]
     if resolver.len == 0:
-      values = hostsFileValues(hostname, normalizedType)
+      values = hostsFileValues(target, normalizedType)
       if values.len == 0:
         try:
-          let literal = parseIpAddress(hostname)
+          let literal = parseIpAddress(target)
           if (normalizedType == "A" and
               literal.family == IpAddressFamily.IPv4) or
               (normalizedType == "AAAA" and
@@ -329,7 +330,7 @@ proc checkDns*(hostname: string, recordType: string = "A",
         if configuredResolver.host.len > 0: configuredResolver.host
         else: systemResolver()
       let queryId = newQueryId()
-      let query = buildDnsQuery(hostname, normalizedType, queryId)
+      let query = buildDnsQuery(target, normalizedType, queryId)
       let deadline = startTime + initDuration(milliseconds = timeoutMs)
       let udpResponse = udpDnsQuery(
         query, resolverHost, configuredResolver.port, deadline
@@ -343,10 +344,10 @@ proc checkDns*(hostname: string, recordType: string = "A",
 
     let durationMs = elapsedMs()
     if values.len == 0:
-      let message = "DNS ERROR - " & hostname & " has no " &
+      let message = "DNS ERROR - " & target & " has no " &
         normalizedType & " records - Latency: " & $durationMs & "ms"
       return CheckResult(
-        kind: "dns", target: hostname, isOk: false, message: message,
+        kind: "dns", target: target, isOk: false, message: message,
         latencyMs: durationMs, details: "Type: " & normalizedType &
           ", Answers: none"
       )
@@ -356,51 +357,51 @@ proc checkDns*(hostname: string, recordType: string = "A",
     )
     let answers = values.join(", ")
     if missing.len > 0:
-      let message = "DNS ERROR - " & hostname & " " & normalizedType &
+      let message = "DNS ERROR - " & target & " " & normalizedType &
         " records did not include expected values - Latency: " &
         $durationMs & "ms"
       return CheckResult(
-        kind: "dns", target: hostname, isOk: false, message: message,
+        kind: "dns", target: target, isOk: false, message: message,
         latencyMs: durationMs, details: "Answers: " & answers &
           ", Missing: " & missing.join(", ")
       )
 
-    let message = "DNS OK - " & hostname & " " & normalizedType &
+    let message = "DNS OK - " & target & " " & normalizedType &
       " records: " & answers & " - Latency: " & $durationMs & "ms"
     CheckResult(
-      kind: "dns", target: hostname, isOk: true, message: message,
+      kind: "dns", target: target, isOk: true, message: message,
       latencyMs: durationMs, details: "Type: " & normalizedType &
         ", Answers: " & answers
     )
   except TimeoutError:
     let durationMs = elapsedMs()
     CheckResult(
-      kind: "dns", target: hostname, isOk: false,
-      message: "DNS ERROR - " & hostname & " query timed out - Latency: " &
+      kind: "dns", target: target, isOk: false,
+      message: "DNS ERROR - " & target & " query timed out - Latency: " &
         $durationMs & "ms",
       latencyMs: durationMs, details: "Timeout"
     )
   except DnsProtocolError:
     let durationMs = elapsedMs()
     CheckResult(
-      kind: "dns", target: hostname, isOk: false,
-      message: "DNS ERROR - " & hostname & " could not be resolved - Latency: " &
+      kind: "dns", target: target, isOk: false,
+      message: "DNS ERROR - " & target & " could not be resolved - Latency: " &
         $durationMs & "ms",
       latencyMs: durationMs, details: getCurrentExceptionMsg()
     )
   except OSError, IOError:
     let durationMs = elapsedMs()
     CheckResult(
-      kind: "dns", target: hostname, isOk: false,
-      message: "DNS ERROR - " & hostname & " could not be resolved - Latency: " &
+      kind: "dns", target: target, isOk: false,
+      message: "DNS ERROR - " & target & " could not be resolved - Latency: " &
         $durationMs & "ms",
       latencyMs: durationMs, details: "Resolver transport failed"
     )
   except CatchableError:
     let durationMs = elapsedMs()
     CheckResult(
-      kind: "dns", target: hostname, isOk: false,
-      message: "DNS ERROR - " & hostname &
+      kind: "dns", target: target, isOk: false,
+      message: "DNS ERROR - " & target &
         " - Unexpected resolver error - Latency: " & $durationMs & "ms",
       latencyMs: durationMs, details: "Unexpected resolver error"
     )
