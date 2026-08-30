@@ -1,18 +1,15 @@
-import std/[monotimes, nativesockets, net, oserrors, strutils, times]
+import std/[monotimes, nativesockets, net, oserrors, strutils]
 import ../[common, input_contract, network_target]
 
 proc checkUdp*(host: string, port: int, payload: string = "ping",
                expected: string = "", timeoutMs: int = 5000): CheckResult =
   ## Check UDP reachability by receiving a response before the timeout.
+  let startTime = getMonoTime()
   validateHostname(host)
   validatePort(port)
   validateCommon(timeoutMs, 1)
   let target = formatHostPort(host, port)
-  let startTime = getMonoTime()
   var sockets: seq[Socket]
-
-  template elapsedMs(): int =
-    (getMonoTime() - startTime).inMilliseconds.int
 
   try:
     let endpoints = resolveNetworkEndpoints(
@@ -34,10 +31,10 @@ proc checkUdp*(host: string, port: int, payload: string = "ping",
     var readable: seq[SocketHandle]
     for socket in sockets:
       readable.add(socket.getFd())
-    let waitMs = max(0, timeoutMs - elapsedMs())
+    let waitMs = max(0, timeoutMs - elapsedMilliseconds(startTime))
     let ready = if waitMs > 0: selectRead(readable, waitMs) else: 0
     if ready == 0:
-      let durationMs = elapsedMs()
+      let durationMs = elapsedMilliseconds(startTime)
       let msg = "UDP TIMEOUT - " & target & " - After " & $durationMs & "ms"
       return CheckResult(
         kind: "udp", target: target, isOk: false, message: msg,
@@ -53,7 +50,7 @@ proc checkUdp*(host: string, port: int, payload: string = "ping",
       if socket.getFd() in readable:
         discard socket.recvFrom(response, 65_535, responseHost, responsePort)
         break
-    let durationMs = elapsedMs()
+    let durationMs = elapsedMilliseconds(startTime)
     if expected.len > 0 and expected notin response:
       let msg = "UDP ERROR - " & target & " - Expected response not received - Latency: " & $durationMs & "ms"
       return CheckResult(
@@ -68,11 +65,11 @@ proc checkUdp*(host: string, port: int, payload: string = "ping",
       latencyMs: durationMs, details: "Response: " & response.strip()
     )
   except OSError, IOError:
-    let durationMs = elapsedMs()
+    let durationMs = elapsedMilliseconds(startTime)
     let msg = "UDP ERROR - " & target & " - Socket operation failed"
     return CheckResult(kind: "udp", target: target, isOk: false, message: msg, latencyMs: durationMs, details: "Socket operation failed")
   except CatchableError:
-    let durationMs = elapsedMs()
+    let durationMs = elapsedMilliseconds(startTime)
     let msg = "UDP ERROR - " & target & " - Unexpected socket error"
     return CheckResult(kind: "udp", target: target, isOk: false, message: msg, latencyMs: durationMs, details: "Unexpected socket error")
   finally:

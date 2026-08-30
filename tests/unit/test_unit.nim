@@ -1,5 +1,5 @@
 import nim_sqlite
-import std/[httpcore, json, net, options, os, strutils, unittest]
+import std/[httpcore, json, monotimes, net, options, os, strutils, unittest]
 import ../../src/[common, input_contract, network_target, notifier,
                     process_runner]
 import ../../src/canary/[app, cli, config]
@@ -223,6 +223,25 @@ suite "result formatting and check IDs":
     check payload["latency_ms"].getInt() == 7
     check payload["message"].getStr() == "TCP OK"
     check payload["details"].getStr() == "connected"
+    check not payload.hasKey("response_time_ms")
+
+  test "HTTP JSON names the total measurement as response time":
+    let httpResult = CheckResult(
+      kind: "http",
+      target: "https://example.test/health",
+      isOk: true,
+      message: "HTTP OK - Response time: 11ms",
+      latencyMs: 11,
+      details: "Status: 200 OK"
+    )
+    let payload = parseJson(formatResult(httpResult, true))
+    check payload["response_time_ms"].getInt() == 11
+    check payload["latency_ms"].getInt() == 11
+
+  test "elapsed duration helper accepts a monotonic start time":
+    let started = getMonoTime()
+    sleep(10)
+    check elapsedMilliseconds(started) >= 5
 
   test "check IDs are stable across check shapes":
     check makeCheckId("http", "https://example.test/health") ==
@@ -552,6 +571,7 @@ suite "argument-safe system checks":
                                      input: string,
                                      timeoutMs: int): ProcessResult =
       calls.add((command, args, input))
+      sleep(20)
       if args[0] == "s_client":
         ProcessResult(output: Certificate, exitCode: 0)
       else:
@@ -570,6 +590,7 @@ suite "argument-safe system checks":
     check calls[1].command == "openssl"
     check calls[1].args == @["x509", "-noout", "-enddate"]
     check calls[1].input == Certificate
+    check result.latencyMs >= 30
     check "secret" notin formatResult(result, true)
 
   test "SSL formats an IPv6 connection target with brackets":

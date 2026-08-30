@@ -1,9 +1,10 @@
-import std/[net, times]
+import std/[monotimes, net]
 import ../[common, input_contract, network_target, process_runner]
 
 proc checkIcmp*(host: string, count: int = 1, timeoutMs: int = 5000,
                 runner: ProcessRunner = nil): CheckResult =
   ## Check ICMP reachability with a direct `ping` argv invocation.
+  let startTime = getMonoTime()
   validateHostname(host)
   validatePacketCount(count)
   validateCommon(timeoutMs, 1)
@@ -25,7 +26,6 @@ proc checkIcmp*(host: string, count: int = 1, timeoutMs: int = 5000,
     args.add(@[
       "-c", $count, "-W", $max(1, timeoutMs div 1000), networkHost
     ])
-    let startTime = epochTime()
     var execution: ProcessResult
     try:
       execution = execute(
@@ -40,7 +40,7 @@ proc checkIcmp*(host: string, count: int = 1, timeoutMs: int = 5000,
         "ICMP check requires the 'ping' executable on PATH"
       )
 
-    let durationMs = int((epochTime() - startTime) * 1000)
+    let durationMs = elapsedMilliseconds(startTime)
     if execution.timedOut:
       let msg = "ICMP TIMEOUT - " & networkHost & " - After " &
         $durationMs & "ms"

@@ -91,6 +91,7 @@ suite "Canary CLI compatibility contract":
     check result.stdout.contains("--status")
     check result.stdout.contains("--statusRange")
     check result.stdout.contains("--maxLatency")
+    check result.stdout.contains("total HTTP response time")
     check result.stdout.contains("--responseHeader")
     check result.stdout.contains("--regex")
     check result.stdout.contains("--jsonField")

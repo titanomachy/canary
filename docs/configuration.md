@@ -48,7 +48,7 @@ timeout = 3000
 status = 200
 maxRedirects = 3
 # statusRange = "2xx,304" # Replaces the exact status assertion when set.
-# maxLatency = 500
+# maxLatency = 500 # Maximum total HTTP response time; legacy option name
 # responseHeader = "Content-Type: application/json"
 # regex = "ready|healthy"
 # jsonField = "service.status=ready"
@@ -84,6 +84,10 @@ leave `DOWN`. Available command keys are:
 | `[udp]` | `port`, `payload`, `expected`, `timeout` |
 | `[dns]` | `type`, `expected`, `resolver`, `timeout` |
 | `[icmp]` | `count`, `timeout` |
+
+The established HTTP key `maxLatency` is retained for compatibility. It limits
+the total HTTP response time defined in the
+[baseline contract](baseline-contract.md), not only one network phase.
 
 Targets (`url` or `host`) are intentionally not loaded from TOML or the
 environment. Supply exactly one target after the command.

@@ -299,16 +299,13 @@ proc checkDns*(hostname: string, recordType: string = "A",
                timeoutMs: int = 5000): CheckResult =
   ## Query a bounded DNS resolver operation and require every configured
   ## expected value. Additional answers are allowed.
+  let startTime = getMonoTime()
   validateHostname(hostname)
   validateCommon(timeoutMs, 1)
   let target = normalizedNetworkHost(hostname)
   let normalizedType = normalizedDnsRecordType(recordType)
   validateDnsExpectedValues(normalizedType, expectedValues)
   let configuredResolver = splitDnsResolver(resolver)
-  let startTime = getMonoTime()
-
-  template elapsedMs(): int =
-    (getMonoTime() - startTime).inMilliseconds.int
 
   try:
     var values: seq[string]
@@ -342,7 +339,7 @@ proc checkDns*(hostname: string, recordType: string = "A",
           udpResponse
       values = parseDnsResponse(response, queryId, normalizedType)
 
-    let durationMs = elapsedMs()
+    let durationMs = elapsedMilliseconds(startTime)
     if values.len == 0:
       let message = "DNS ERROR - " & target & " has no " &
         normalizedType & " records - Latency: " & $durationMs & "ms"
@@ -374,7 +371,7 @@ proc checkDns*(hostname: string, recordType: string = "A",
         ", Answers: " & answers
     )
   except TimeoutError:
-    let durationMs = elapsedMs()
+    let durationMs = elapsedMilliseconds(startTime)
     CheckResult(
       kind: "dns", target: target, isOk: false,
       message: "DNS ERROR - " & target & " query timed out - Latency: " &
@@ -382,7 +379,7 @@ proc checkDns*(hostname: string, recordType: string = "A",
       latencyMs: durationMs, details: "Timeout"
     )
   except DnsProtocolError:
-    let durationMs = elapsedMs()
+    let durationMs = elapsedMilliseconds(startTime)
     CheckResult(
       kind: "dns", target: target, isOk: false,
       message: "DNS ERROR - " & target & " could not be resolved - Latency: " &
@@ -390,7 +387,7 @@ proc checkDns*(hostname: string, recordType: string = "A",
       latencyMs: durationMs, details: getCurrentExceptionMsg()
     )
   except OSError, IOError:
-    let durationMs = elapsedMs()
+    let durationMs = elapsedMilliseconds(startTime)
     CheckResult(
       kind: "dns", target: target, isOk: false,
       message: "DNS ERROR - " & target & " could not be resolved - Latency: " &
@@ -398,7 +395,7 @@ proc checkDns*(hostname: string, recordType: string = "A",
       latencyMs: durationMs, details: "Resolver transport failed"
     )
   except CatchableError:
-    let durationMs = elapsedMs()
+    let durationMs = elapsedMilliseconds(startTime)
     CheckResult(
       kind: "dns", target: target, isOk: false,
       message: "DNS ERROR - " & target &

@@ -86,7 +86,7 @@ type
     maxLatencyMs* {.
       name: "maxLatency"
       defaultValue: 0
-      desc: "Maximum response latency in milliseconds (0 disables)" .}: int
+      desc: "Maximum total HTTP response time in milliseconds (0 disables)" .}: int
     responseHeader* {.
       name: "responseHeader"
       defaultValue: ""

@@ -9,7 +9,7 @@ A lightweight, stateless-by-default service health and uptime monitoring CLI in 
 Many monitoring solutions are heavy background daemons bundling their own schedulers, web servers, and persistent services. **Canary** adheres to the Unix philosophy: *do one thing and do it well*.
 
 1. **Stateless & Fast:** Without `--db`, `CANARY_DB`, or `--notify`, Canary executes one targeted health check without writing state and exits immediately.
-2. **Orchestrated by Metronome/Metronome-Web:** [Metronome](https://github.com/titanomachy/Metronome)/[Metronome-Web](https://github.com/titanomachy/Metronome-Web) manages the cron/interval schedule, asynchronous job execution, run history, and Apache ECharts latency visualisations.
+2. **Orchestrated by Metronome/Metronome-Web:** [Metronome](https://github.com/titanomachy/Metronome)/[Metronome-Web](https://github.com/titanomachy/Metronome-Web) manages the cron/interval schedule, asynchronous job execution, run history, and Apache ECharts response-time visualisations.
 3. **Smart State Tracking & Alerting:** Powered by [nim-sqlite](https://github.com/titanomachy/nim-sqlite), Canary records endpoint status and failure counts in an embedded SQLite database (`~/.config/canary/state.db`). Notifications (Pushover, Slack, Discord, Webhooks) are dispatched **only on state transitions** (`UP -> DOWN` and `DOWN -> UP`), eliminating alert fatigue and false positives.
 
 ```text
@@ -82,6 +82,32 @@ Every command accepts `--id NAME` to give state an explicit identity. Use it
 when checks share a target but have different assertions, so their retry and
 notification histories remain independent.
 
+### Elapsed-time measurements
+
+Every check measures elapsed time with Nim's monotonic `getMonoTime()` clock,
+so corrections to the system wall clock cannot make a measurement jump forward
+or backward. The timer starts when the check function starts and ends when its
+result has been received and classified:
+
+- HTTP includes client setup, redirects, receiving the complete response body,
+  and processing the configured status, header, text, regex, and JSON
+  assertions. **The response time is the total elapsed time from starting the
+  HTTP check through receiving and processing the complete response.** A
+  request failure or timeout is measured until that failure is classified.
+- SSL includes both OpenSSL invocations, certificate extraction, expiration
+  parsing, and validity classification. The certificate's absolute expiration
+  date is intentionally compared with the wall clock; only elapsed duration
+  uses the monotonic clock.
+- TCP includes address resolution, connection, and any configured send and
+  response match. UDP includes address resolution, sending, receiving, and the
+  optional response match. DNS includes the hosts-file or resolver query,
+  possible UDP-to-TCP fallback, and answer processing. ICMP includes the
+  complete `ping` helper-process run and exit classification.
+
+On some systems a monotonic clock does not count time spent in system suspend.
+For normal uptime checks while the system is active, `getMonoTime()` is still
+the correct clock because it is unaffected by wall-clock adjustments.
+
 ---
 
 ### 1. HTTP / HTTPS Checks (`canary http`)
@@ -102,7 +128,7 @@ Monitor web applications, REST APIs, and websites with optional keyword matching
 ./canary http https://api.example.com/v1/ping \
   --methodStr POST --body '{"ping": true}' --status 201
 
-# Accept a status class and assert latency, a header, and JSON content
+# Accept a status class and assert total response time, a header, and JSON content
 ./canary http https://api.example.com/v1/health \
   --statusRange '2xx' --maxLatency 500 \
   --responseHeader 'Content-Type: application/json' \
@@ -119,7 +145,7 @@ Monitor web applications, REST APIs, and websites with optional keyword matching
 | `-t=, --timeout=` | `int` | `5000` | Timeout in milliseconds |
 | `-s=, --status=` | `int` | `200` | Expected HTTP status code |
 | `--statusRange=` | `string` | `""` | Accepted codes, ranges, or classes, such as `200,204,3xx` (overrides `--status`) |
-| `--maxLatency=` | `int` | `0` | Maximum response latency in milliseconds; `0` disables the assertion |
+| `--maxLatency=` | `int` | `0` | Maximum total HTTP response time in milliseconds; `0` disables the assertion (option name retained for compatibility) |
 | `--search=` | `string` | `""` | Substring that must be present in response body |
 | `--regex=` | `string` | `""` | Regular expression that must match the response body |
 | `--headers=` | `string` | `""` | Request headers separated by commas or newlines |
@@ -138,15 +164,19 @@ Monitor web applications, REST APIs, and websites with optional keyword matching
 #### Terminal Output Examples:
 ```text
 $ ./canary http https://example.com --search "Example Domain"
-HTTP OK - https://example.com - Status: 200 OK - Latency: 42ms
+HTTP OK - https://example.com - Status: 200 OK - Response time: 42ms
 
 $ ./canary http https://example.com/not-found
-HTTP ERROR - https://example.com/not-found - Status: 404 Not Found (Expected: 200) - Latency: 18ms
+HTTP ERROR - https://example.com/not-found - Status: 404 Not Found (Expected: 200) - Response time: 18ms
 [exit code: 1]
 
 $ ./canary http https://example.com --methodStr HEAD --json
-{"check":"http","target":"https://example.com","status":"UP","latency_ms":35,"message":"HTTP OK - https://example.com - Status: 200 OK - Latency: 35ms","details":"Status: 200 OK"}
+{"check":"http","target":"https://example.com","status":"UP","latency_ms":35,"message":"HTTP OK - https://example.com - Status: 200 OK - Response time: 35ms","details":"Status: 200 OK","response_time_ms":35}
 ```
+
+Human-readable HTTP output calls this measurement `Response time`. HTTP JSON
+adds the precise `response_time_ms` field; the equal-valued `latency_ms` field
+remains available for compatibility with existing consumers.
 
 ---
 
@@ -471,7 +501,7 @@ CANARY_NOTIFY='https://hooks.slack.com/services/...' \
 | **DNS Resolution: Core API** | `every 5 minutes` or `*/5 * * * *` | `/opt/canary/canary dns api.example.com --expected "93.184.216.34"` |
 
 ### Why this combination works:
-- **Automatic Latency Graphs:** Canary output (e.g. `HTTP OK - Latency: 42ms`) and process execution duration are logged to SQLite by Metronome-Web and visualized in Apache ECharts.
+- **Automatic Response-Time Graphs:** Canary output (for example, `HTTP OK - Response time: 42ms`) and process execution duration are logged to SQLite by Metronome-Web and visualized in Apache ECharts.
 - **Exit Code Integration:** Exit code `0` displays a green success status; exit code `1` marks the run as failed and highlights the error message in the history log.
 
 ---

@@ -47,6 +47,27 @@ Help and version requests exit with `0`. A remote timeout, refused connection,
 unexpected response, or failed assertion is a completed `DOWN` check, not an
 internal error.
 
+## Elapsed-time contract
+
+All six check types measure elapsed duration with the monotonic
+`getMonoTime()` clock rather than the epoch-based wall clock. The timer covers
+the complete check function through result classification. HTTP response time
+specifically covers the interval from starting the HTTP check through receiving
+and processing the complete response, including configured response
+assertions. Failed requests and timeouts are measured until the failure is
+classified.
+
+Human-readable HTTP output labels the value `Response time`. Structured HTTP
+output exposes it as `response_time_ms` and retains the equal-valued generic
+`latency_ms` field for compatibility. The established `--maxLatency` option
+compares this total HTTP response time, despite its legacy name.
+
+Absolute certificate expiration still requires the system wall clock; only the
+elapsed SSL check duration is monotonic. On some systems the monotonic clock
+does not advance during system suspend. It remains the appropriate clock for
+normal uptime checks while the system is active because wall-clock corrections
+cannot distort elapsed measurements.
+
 Invalid timeouts, retry thresholds, ports, methods, hostnames, status codes,
 DNS expectations, header syntax, TLS thresholds, redirect counts, and ICMP
 packet counts are configuration errors. They are rejected before network or

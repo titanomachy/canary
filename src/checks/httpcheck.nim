@@ -1,15 +1,16 @@
-import std/[httpclient, json, net, re, strutils, times]
+import std/[httpclient, json, monotimes, net, re, strutils]
 import ../[common, input_contract]
 
-proc failedHttpResult(displayUrl, reason: string, durationMs: int,
+proc failedHttpResult(displayUrl, reason: string, startTime: MonoTime,
                       details: string): CheckResult =
+  let responseTimeMs = elapsedMilliseconds(startTime)
   CheckResult(
     kind: "http",
     target: displayUrl,
     isOk: false,
     message: "HTTP ERROR - " & displayUrl & " - " & reason &
-      " - Latency: " & $durationMs & "ms",
-    latencyMs: durationMs,
+      " - Response time: " & $responseTimeMs & "ms",
+    latencyMs: responseTimeMs,
     details: details
   )
 
@@ -102,13 +103,13 @@ proc checkHttp*(url: string,
                bodyRegex: string = "",
                jsonField: string = ""): CheckResult =
   ## Check an HTTP(S) endpoint with headers, methods, redirects, and content matching.
+  let startTime = getMonoTime()
   validateHttp(
     url, timeoutMs, 1, expectedStatus, maxRedirects, methodStr, statusRange,
     maxLatencyMs, responseHeader, bodyRegex, jsonField
   )
   validateHttpHeaders(headers)
   let displayUrl = publicTarget(url)
-  let startTime = epochTime()
   var client: HttpClient
 
   try:
@@ -121,7 +122,6 @@ proc checkHttp*(url: string,
     )
     let response = client.request(url, httpVerb, body)
     let responseBody = response.body
-    let durationMs = int((epochTime() - startTime) * 1000)
     let statusCode = parseInt(split($response.status, " ")[0])
 
     if not statusAccepted(statusCode, expectedStatus, statusRange):
@@ -129,42 +129,35 @@ proc checkHttp*(url: string,
       return failedHttpResult(
         displayUrl,
         "Status: " & response.status & " (Expected: " & expectation & ")",
-        durationMs,
+        startTime,
         "Expected status: " & expectation & ", Received: " & response.status
-      )
-
-    if maxLatencyMs > 0 and durationMs > maxLatencyMs:
-      return failedHttpResult(
-        displayUrl, "Maximum latency exceeded", durationMs,
-        "Status: " & response.status & ", Maximum latency: " &
-          $maxLatencyMs & "ms"
       )
 
     if responseHeader.len > 0:
       let expectedHeader = responseHeaderExpectation(responseHeader)
       if not response.headers.hasKey(expectedHeader.name):
         return failedHttpResult(
-          displayUrl, "Required response header missing", durationMs,
+          displayUrl, "Required response header missing", startTime,
           "Status: " & response.status & ", Missing response header: " &
             expectedHeader.name
         )
       if expectedHeader.value.len > 0 and
           expectedHeader.value notin response.headers[expectedHeader.name]:
         return failedHttpResult(
-          displayUrl, "Response header value did not match", durationMs,
+          displayUrl, "Response header value did not match", startTime,
           "Status: " & response.status & ", Response header mismatch: " &
             expectedHeader.name
         )
 
     if search.len > 0 and search notin responseBody:
       return failedHttpResult(
-        displayUrl, "Required text not found in body", durationMs,
+        displayUrl, "Required text not found in body", startTime,
         "Status: " & response.status & ", Required text missing"
       )
 
     if bodyRegex.len > 0 and not responseBody.contains(re(bodyRegex)):
       return failedHttpResult(
-        displayUrl, "Response body regex did not match", durationMs,
+        displayUrl, "Response body regex did not match", startTime,
         "Status: " & response.status & ", Body regex mismatch"
       )
 
@@ -172,37 +165,58 @@ proc checkHttp*(url: string,
       try:
         if not matchesJsonField(responseBody, jsonField):
           return failedHttpResult(
-            displayUrl, "JSON field did not match", durationMs,
+            displayUrl, "JSON field did not match", startTime,
             "Status: " & response.status & ", JSON field mismatch"
           )
       except JsonParsingError:
         return failedHttpResult(
-          displayUrl, "Response body is not valid JSON", durationMs,
+          displayUrl, "Response body is not valid JSON", startTime,
           "Status: " & response.status & ", Invalid JSON response"
         )
 
+    if maxLatencyMs > 0 and elapsedMilliseconds(startTime) > maxLatencyMs:
+      return failedHttpResult(
+        displayUrl, "Maximum response time exceeded", startTime,
+        "Status: " & response.status & ", Maximum response time: " &
+          $maxLatencyMs & "ms"
+      )
+
+    let responseTimeMs = elapsedMilliseconds(startTime)
     let msg = "HTTP OK - " & displayUrl & " - Status: " & response.status &
-      " - Latency: " & $durationMs & "ms"
+      " - Response time: " & $responseTimeMs & "ms"
     return CheckResult(
       kind: "http",
       target: displayUrl,
       isOk: true,
       message: msg,
-      latencyMs: durationMs,
+      latencyMs: responseTimeMs,
       details: "Status: " & response.status
     )
   except TimeoutError:
-    let durationMs = int((epochTime() - startTime) * 1000)
-    let msg = "HTTP TIMEOUT - " & displayUrl & " - After " & $durationMs & "ms"
-    return CheckResult(kind: "http", target: displayUrl, isOk: false, message: msg, latencyMs: durationMs, details: "Timeout")
+    let responseTimeMs = elapsedMilliseconds(startTime)
+    let msg = "HTTP TIMEOUT - " & displayUrl & " - Response time: " &
+      $responseTimeMs & "ms"
+    return CheckResult(
+      kind: "http", target: displayUrl, isOk: false, message: msg,
+      latencyMs: responseTimeMs, details: "Timeout"
+    )
   except HttpRequestError, OSError, IOError, ValueError:
-    let durationMs = int((epochTime() - startTime) * 1000)
-    let msg = "HTTP ERROR - " & displayUrl & " - Request failed"
-    return CheckResult(kind: "http", target: displayUrl, isOk: false, message: msg, latencyMs: durationMs, details: "Request failed")
+    let responseTimeMs = elapsedMilliseconds(startTime)
+    let msg = "HTTP ERROR - " & displayUrl &
+      " - Request failed - Response time: " & $responseTimeMs & "ms"
+    return CheckResult(
+      kind: "http", target: displayUrl, isOk: false, message: msg,
+      latencyMs: responseTimeMs, details: "Request failed"
+    )
   except CatchableError:
-    let durationMs = int((epochTime() - startTime) * 1000)
-    let msg = "HTTP ERROR - " & displayUrl & " - Unexpected client error"
-    return CheckResult(kind: "http", target: displayUrl, isOk: false, message: msg, latencyMs: durationMs, details: "Unexpected client error")
+    let responseTimeMs = elapsedMilliseconds(startTime)
+    let msg = "HTTP ERROR - " & displayUrl &
+      " - Unexpected client error - Response time: " &
+      $responseTimeMs & "ms"
+    return CheckResult(
+      kind: "http", target: displayUrl, isOk: false, message: msg,
+      latencyMs: responseTimeMs, details: "Unexpected client error"
+    )
   finally:
     if client != nil:
       client.close()

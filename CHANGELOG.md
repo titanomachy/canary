@@ -40,6 +40,8 @@ All notable changes to Canary are documented in this file.
 - IPv6 support across HTTP(S), TCP, UDP, DNS resolver transport, TLS, and ICMP,
   with dual-stack address resolution, canonical bracketed endpoints, and local
   IPv6 loopback coverage.
+- An explicit `response_time_ms` field for HTTP JSON results, alongside the
+  retained `latency_ms` compatibility field.
 
 ### Changed
 
@@ -66,6 +68,11 @@ All notable changes to Canary are documented in this file.
   and stdin, without a shell, redirection, or pipeline.
 - Invalid configuration consistently exits with code `2`; network and assertion
   failures remain completed `DOWN` checks with code `1`.
+- All check durations now use the monotonic `getMonoTime()` clock, preventing
+  system wall-clock corrections from distorting elapsed measurements. SSL
+  duration now covers certificate inspection and parsing as well as handshake.
+- Human-readable HTTP output and documentation now call the full-operation
+  measurement response time; `--maxLatency` applies to that total response time.
 
 ### Security
 

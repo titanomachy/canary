@@ -1,6 +1,6 @@
 import nim_sqlite
-import std/[monotimes, net, options, os, osproc, streams, strutils, times,
-            unittest]
+import std/[json, monotimes, net, options, os, osproc, streams, strutils,
+            times, unittest]
 import ../../src/[common, notifier, process_runner]
 import ../../src/checks/[dnscheck, httpcheck, sslcheck, tcpcheck, udpcheck]
 import ../test_support
@@ -29,6 +29,10 @@ suite "local HTTP and UDP checks":
     )
     check result.isOk
     check result.details.startsWith("Status: 200")
+    check "Response time: " in result.message
+    let payload = parseJson(formatResult(result, true))
+    check payload["response_time_ms"].getInt() == result.latencyMs
+    check payload["latency_ms"].getInt() == result.latencyMs
     server.waitForSuccess()
 
   test "HTTP result output omits userinfo, query values, and fragments":
@@ -81,7 +85,7 @@ suite "local HTTP and UDP checks":
     check result.details.startsWith("Status: 202")
     server.waitForSuccess()
 
-  test "HTTP maximum latency and JSON mismatches produce DOWN results":
+  test "HTTP maximum response time and JSON mismatches produce DOWN results":
     var slowServer = startLocalServer("http-ok", ["--delay-ms=100"])
     defer: slowServer.stop()
     let slowResult = checkHttp(
@@ -90,7 +94,8 @@ suite "local HTTP and UDP checks":
       maxLatencyMs = 25
     )
     check not slowResult.isOk
-    check "Maximum latency: 25ms" in slowResult.details
+    check "Maximum response time: 25ms" in slowResult.details
+    check "Response time: " in slowResult.message
     slowServer.waitForSuccess()
 
     var jsonServer = startLocalServer("http-json")

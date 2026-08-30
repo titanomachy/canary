@@ -1,10 +1,7 @@
-import std/[monotimes, nativesockets, net, oserrors, strutils, times]
+import std/[monotimes, nativesockets, net, oserrors, strutils]
 import ../[common, input_contract, network_target]
 
 const TcpReadChunkBytes = 4096
-
-proc elapsedMilliseconds(startTime: MonoTime): int =
-  int((getMonoTime() - startTime).inMilliseconds)
 
 proc remainingMilliseconds(startTime: MonoTime, timeoutMs: int): int =
   result = timeoutMs - elapsedMilliseconds(startTime)
@@ -84,12 +81,12 @@ proc checkTcp*(host: string, port: int, timeoutMs: int = 5000,
                request: string = "", expected: string = ""): CheckResult =
   ## Connect, optionally send a request, and optionally match a response. An
   ## expectation without a request supports server-first banners such as SSH.
+  let startTime = getMonoTime()
   validateHostname(host)
   validatePort(port)
   validateCommon(timeoutMs, 1)
   validateTcpProbe(request, expected)
   let target = formatHostPort(host, port)
-  let startTime = getMonoTime()
   var sock: Socket
   var connected = false
 

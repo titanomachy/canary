@@ -20,6 +20,12 @@ configuration for all six check kinds, parser-independent check execution,
 stable and explicit check IDs, layered TOML/environment/CLI precedence,
 environment-based secret inputs, and state transitions.
 
+Timing coverage verifies that the shared elapsed-time helper accepts a
+monotonic `MonoTime`, HTTP output uses `Response time` and
+`response_time_ms`, and the legacy `latency_ms` JSON field remains equal for
+compatibility. Local delayed fixtures exercise the total HTTP response-time
+threshold and the bounded monotonic deadlines used by UDP, TCP, and DNS.
+
 The unit suite also verifies that shell metacharacters remain a literal process
 argument, helper-process timeouts are enforced, ICMP and OpenSSL receive exact
 argv arrays, invalid host fragments never reach a runner, TLS handshake failures

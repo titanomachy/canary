@@ -88,6 +88,12 @@ Diagnostics do not have to retain parser-specific punctuation, wrapping, or
 complete help text. Their channel, exit code, and enough context to identify
 the invalid input are stable.
 
+Completed JSON results contain the generic `latency_ms` duration. HTTP results
+also contain the equal-valued `response_time_ms` field and label the value
+`Response time` in their human-readable message. It is the total monotonic
+elapsed time from starting the HTTP check through receiving and processing the
+complete response. `--maxLatency` applies to that same total response time.
+
 ## Automated coverage
 
 The black-box suite in `tests/cli/test_cli.nim` launches the compiled Canary

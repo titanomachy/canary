@@ -1,4 +1,4 @@
-import std/[json, os, strutils, uri]
+import std/[json, monotimes, os, strutils, times, uri]
 
 type
   CanaryConfigError* = object of ValueError
@@ -10,6 +10,10 @@ type
     message*: string
     latencyMs*: int
     details*: string
+
+proc elapsedMilliseconds*(startTime: MonoTime): int =
+  ## Measure elapsed check time independently of adjustments to the wall clock.
+  max(0, (getMonoTime() - startTime).inMilliseconds.int)
 
 proc publicTarget*(target: string): string =
   ## Remove URL credentials, query values, and fragments from public output.
@@ -58,7 +62,7 @@ proc formatResult*(res: CheckResult, asJson: bool = false): string =
   ## Format a check result without performing I/O.
   let safe = publicResult(res)
   if asJson:
-    let j = %*{
+    var j = %*{
       "check": safe.kind,
       "target": safe.target,
       "status": if safe.isOk: "UP" else: "DOWN",
@@ -66,6 +70,10 @@ proc formatResult*(res: CheckResult, asJson: bool = false): string =
       "message": safe.message,
       "details": safe.details
     }
+    if safe.kind == "http":
+      # Keep latency_ms for compatibility while naming the complete HTTP
+      # measurement precisely for new consumers.
+      j["response_time_ms"] = %safe.latencyMs
     result = $j
   else:
     result = safe.message
