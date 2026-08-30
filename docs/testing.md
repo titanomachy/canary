@@ -9,7 +9,7 @@ on public websites, DNS records, or notification services.
 | --- | --- |
 | `nimble test` | Unit, integration, and CLI suites. |
 | `nimble testCli` | Public stdout, stderr, JSON, and exit-code contract. |
-| `nimble testIntegration` | Local HTTP, UDP, webhook, and SQLite concurrency scenarios. |
+| `nimble testIntegration` | Local HTTP, TCP, UDP, DNS, TLS, webhook, and SQLite scenarios. |
 | `nimble checkAll` | Style/static checks, debug and release builds, then every suite. |
 
 ## Unit coverage
@@ -41,10 +41,12 @@ DOWN + success ──────────────────> UP + reco
 ## Integration fixtures
 
 `tests/fixtures/local_server.nim` binds only to `127.0.0.1` on a kernel-assigned
-port. It serves one HTTP request or UDP datagram and exits. Its modes provide:
+port. It serves one local protocol exchange and exits. Its modes provide:
 
 - successful and mismatching HTTP responses;
 - matching and mismatching UDP replies;
+- server-first TCP banners, request/response probes, and silent TCP timeouts;
+- local DNS answers for every supported record type;
 - successful, delayed, and HTTP 503 webhook responses.
 - HTTP targets containing userinfo, query values, and fragments to verify output
   redaction.

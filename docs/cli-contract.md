@@ -33,6 +33,28 @@ options. The default TOML path and supported keys are defined in
 [`configuration.md`](configuration.md). A target remains a required positional
 argument and cannot be supplied by TOML or the environment.
 
+The DNS command accepts `--type A|AAAA|CNAME|MX|TXT`, repeatable
+`--expected VALUE`, `--resolver IP[:PORT]`, and `--timeout MILLISECONDS`.
+Resolver IPv6 literals with a port use bracket notation. Every expected answer
+must be returned; extra answers are permitted.
+
+The TCP command accepts `--request VALUE` and `--expected VALUE`. A request is
+sent verbatim after connecting. An expectation requires a matching response
+substring; without a request it matches server-first banners. `--timeout`
+bounds the complete connect, send, and receive sequence. Omitting both values
+retains the established connect-only behavior.
+
+Notification delivery can be checked separately with:
+
+```text
+canary notify test <slack|discord|pushover|webhook> [--notify URL]...
+```
+
+`--notify` is repeatable. When it is omitted, targets are read from a TOML
+`notify` array or `CANARY_NOTIFY`; secrets therefore do not need to appear in
+the process argument list. A test delivery returns `0` on success, `1` on
+delivery failure, and `2` for invalid configuration or a provider mismatch.
+
 ## Compatibility matrix
 
 | Invocation category | Exit code | stdout | stderr |

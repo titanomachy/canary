@@ -2,7 +2,7 @@ import nim_sqlite
 import std/[httpcore, json, net, options, os, strutils, unittest]
 import ../../src/[common, input_contract, notifier, process_runner]
 import ../../src/canary/[app, cli, config]
-import ../../src/checks/[httpcheck, icmpcheck, sslcheck]
+import ../../src/checks/[dnscheck, httpcheck, icmpcheck, sslcheck]
 import ../test_support
 
 proc readState(dbPath: string, jobId: string): tuple[status: string,
@@ -95,6 +95,40 @@ suite "input parsing and validation":
     expect CanaryConfigError:
       validateExpectedIp("not-an-address")
 
+  test "TCP probe payloads are bounded":
+    validateTcpProbe("PING\r\n", "PONG")
+    expect CanaryConfigError:
+      validateTcpProbe(repeat('x', MaxTcpProbeBytes + 1), "")
+    expect CanaryConfigError:
+      validateTcpProbe("", repeat('x', MaxTcpProbeBytes + 1))
+
+  test "DNS types, resolver selection, and record expectations are validated":
+    for recordType in ["A", "aaaa", "CNAME", "MX", "TXT"]:
+      check normalizedDnsRecordType(recordType) == recordType.toUpperAscii()
+    check splitDnsResolver("192.0.2.53") == ("192.0.2.53", 53)
+    check splitDnsResolver("192.0.2.53:5353") == ("192.0.2.53", 5353)
+    check splitDnsResolver("[2001:db8::53]:5353") ==
+      ("2001:db8::53", 5353)
+    validateDnsExpectedValues("A", ["192.0.2.10", "192.0.2.11"])
+    validateDnsExpectedValues("AAAA", ["2001:db8::10"])
+    validateDnsExpectedValues("CNAME", ["alias.example.test."])
+    validateDnsExpectedValues("MX", ["10 mail.example.test."])
+    validateDnsExpectedValues("TXT", ["canary=ready"])
+    expect CanaryConfigError:
+      discard normalizedDnsRecordType("SRV")
+    expect CanaryConfigError:
+      discard splitDnsResolver("resolver.example.test")
+    expect CanaryConfigError:
+      validateDnsExpectedValues("AAAA", ["192.0.2.10"])
+    expect CanaryConfigError:
+      validateDnsExpectedValues("CNAME", ["192.0.2.10"])
+    expect CanaryConfigError:
+      validateDnsExpectedValues("MX", ["mail.example.test"])
+
+  test "malformed DNS packets are rejected by the decoder":
+    expect CatchableError:
+      discard parseDnsResponse("too short", 1234, "A")
+
   test "SSL targets are normalized and validated":
     check hostnameFromSslTarget("example.test") == "example.test"
     check hostnameFromSslTarget("https://user:secret@example.test/path?token=x") ==
@@ -121,6 +155,34 @@ suite "input parsing and validation":
       validateHttp("http://example.test", 100, 1, 200, -1, "GET")
     expect ValueError:
       validateHttp("http://example.test", 100, 1, 200, 0, "BREW")
+
+  test "HTTP status selectors and response assertions are validated":
+    for selector in ["2xx", "200-204", "200,202,304-307"]:
+      validateStatusRange(selector)
+    check statusAccepted(202, 200, "2xx")
+    check statusAccepted(304, 200, "200-204,304")
+    check not statusAccepted(500, 200, "2xx,304")
+    check expectedStatusDescription(200, "2xx") == "2xx"
+    validateResponseHeader("X-Canary-State: ready")
+    validateJsonField("service.status=ready")
+    expect CanaryConfigError:
+      validateStatusRange("600-700")
+    expect CanaryConfigError:
+      validateStatusRange("200-")
+    expect CanaryConfigError:
+      validateResponseHeader("Bad Header: ready")
+    expect CanaryConfigError:
+      validateJsonField("missing-separator")
+    expect CanaryConfigError:
+      validateHttp(
+        "http://example.test", 100, 1, 200, 0, "GET",
+        maxLatencyMs = -1
+      )
+    expect CanaryConfigError:
+      validateHttp(
+        "http://example.test", 100, 1, 200, 0, "GET",
+        bodyRegex = "["
+      )
 
 suite "result formatting and check IDs":
   let sample = CheckResult(
@@ -204,7 +266,9 @@ suite "typed application configuration":
       CanaryConfig(
         kind: ckDns,
         common: commonOptions,
-        dnsConfig: DnsConfig(host: "localhost")
+        dnsConfig: DnsConfig(
+          host: "localhost", recordType: "A", timeoutMs: 100
+        )
       ),
       CanaryConfig(
         kind: ckIcmp,
@@ -294,11 +358,104 @@ suite "layered CLI configuration":
     check parsed.kind == ckHttp
     check parsed.common.retries == 4
     check parsed.common.recoveryThreshold == 4
-    check parsed.common.notifyUrl == "https://env-secret.invalid/hook"
+    check parsed.common.notifyUrls == @["https://env-secret.invalid/hook"]
     check parsed.httpConfig.headers == "Authorization: Bearer env-secret"
     check parsed.httpConfig.expectedStatus == 201
     check parsed.httpConfig.timeoutMs == 1300
     check parsed.httpConfig.maxRedirects == 5
+
+  test "HTTP assertion options map to the parser-independent model":
+    let parsed = loadCliConfig(@[
+      "http", "https://example.test/health",
+      "--statusRange", "2xx,304", "--maxLatency", "250",
+      "--responseHeader", "X-Health: ready", "--regex", "ready|ok",
+      "--jsonField", "service.status=ready"
+    ]).toCanaryConfig()
+    check parsed.httpConfig.statusRange == "2xx,304"
+    check parsed.httpConfig.maxLatencyMs == 250
+    check parsed.httpConfig.responseHeader == "X-Health: ready"
+    check parsed.httpConfig.bodyRegex == "ready|ok"
+    check parsed.httpConfig.jsonField == "service.status=ready"
+
+  test "TCP request and response options map to the typed model and TOML":
+    let fromCli = loadCliConfig(@[
+      "tcp", "127.0.0.1", "--port", "2525",
+      "--request", "EHLO canary\r\n", "--expected", "250 ready"
+    ]).toCanaryConfig()
+    check fromCli.tcpConfig.request == "EHLO canary\r\n"
+    check fromCli.tcpConfig.expected == "250 ready"
+
+    let testDir = newTestDir("tcp-config")
+    defer: removeDir(testDir)
+    let configPath = testDir / "canary.toml"
+    writeFile(configPath,
+      "[tcp]\n" &
+      "port = 2525\n" &
+      "request = \"PING\\r\\n\"\n" &
+      "expected = \"PONG\"\n")
+    let fromToml = loadCliConfig(@[
+      "tcp", "127.0.0.1", "--config", configPath
+    ]).toCanaryConfig()
+    check fromToml.tcpConfig.request == "PING\r\n"
+    check fromToml.tcpConfig.expected == "PONG"
+
+  test "DNS options map repeatable expectations to the typed model":
+    let parsed = loadCliConfig(@[
+      "dns", "fixture.test", "--type", "MX",
+      "--expected", "10 mail1.fixture.test",
+      "--expected", "20 mail2.fixture.test",
+      "--resolver", "127.0.0.1:5353", "--timeout", "750"
+    ]).toCanaryConfig()
+    check parsed.dnsConfig.recordType == "MX"
+    check parsed.dnsConfig.expectedValues == @[
+      "10 mail1.fixture.test", "20 mail2.fixture.test"
+    ]
+    check parsed.dnsConfig.resolver == "127.0.0.1:5353"
+    check parsed.dnsConfig.timeoutMs == 750
+
+  test "DNS arrays and defaults load from TOML":
+    let testDir = newTestDir("dns-config")
+    defer: removeDir(testDir)
+    let configPath = testDir / "canary.toml"
+    writeFile(configPath,
+      "[dns]\n" &
+      "type = \"TXT\"\n" &
+      "expected = [\"canary=ready\", \"region=eu\"]\n" &
+      "resolver = \"127.0.0.1:5353\"\n" &
+      "timeout = 900\n")
+    let parsed = loadCliConfig(@[
+      "dns", "fixture.test", "--config", configPath
+    ]).toCanaryConfig()
+    check parsed.dnsConfig.recordType == "TXT"
+    check parsed.dnsConfig.expectedValues == @["canary=ready", "region=eu"]
+    check parsed.dnsConfig.resolver == "127.0.0.1:5353"
+    check parsed.dnsConfig.timeoutMs == 900
+
+  test "notification targets are lists in TOML and repeatable on the CLI":
+    let testDir = newTestDir("notification-config")
+    defer: removeDir(testDir)
+    let configPath = testDir / "canary.toml"
+    writeFile(configPath,
+      "notify = [\"https://config-one.invalid/hook\", " &
+      "\"https://config-two.invalid/hook\"]\n")
+
+    let fromToml = loadCliConfig(@[
+      "dns", "localhost", "--config", configPath
+    ]).toCanaryConfig()
+    check fromToml.common.notifyUrls == @[
+      "https://config-one.invalid/hook",
+      "https://config-two.invalid/hook"
+    ]
+
+    let fromCli = loadCliConfig(@[
+      "dns", "localhost", "--config", configPath,
+      "--notify", "https://cli-one.invalid/hook",
+      "--notify", "https://cli-two.invalid/hook"
+    ]).toCanaryConfig()
+    check fromCli.common.notifyUrls == @[
+      "https://cli-one.invalid/hook",
+      "https://cli-two.invalid/hook"
+    ]
 
 suite "argument-safe system checks":
   test "the default process runner treats shell syntax as a literal argument":

@@ -5,11 +5,17 @@
 retries = 2
 recoveryThreshold = 2
 json = false
+# notify = ["https://hooks.example.invalid/private-token"]
 
 [http]
 timeout = 3000
 status = 200
 maxRedirects = 3
+# statusRange = "2xx,304"
+# maxLatency = 500
+# responseHeader = "Content-Type: application/json"
+# regex = "ready|healthy"
+# jsonField = "service.status=ready"
 
 [ssl]
 timeout = 5000
@@ -18,13 +24,18 @@ port = 443
 
 [tcp]
 timeout = 3000
+# request = "PING\r\n"
+# expected = "PONG"
 
 [udp]
 timeout = 3000
 payload = "ping"
 
 [dns]
-expected = ""
+timeout = 3000
+type = "A"
+# resolver = "1.1.1.1"
+# expected = ["192.0.2.10", "192.0.2.11"]
 
 [icmp]
 timeout = 3000

@@ -33,13 +33,14 @@ proc runIntegrationTests() =
   exec "nim c -r --nimcache:build/nimcache-integration tests/integration/test_integration.nim"
 
 proc runCliTests() =
+  exec "nim c --nimcache:build/nimcache-fixture -o:build/local_server tests/fixtures/local_server.nim"
   exec "nim c --nimcache:build/nimcache -o:build/canary src/canary.nim"
   exec "nim c -r --nimcache:build/nimcache-tests tests/cli/test_cli.nim"
 
 task testCli, "Run command-line black-box tests":
   runCliTests()
 
-task testIntegration, "Run tests against local HTTP, TLS, UDP, webhook, and SQLite fixtures":
+task testIntegration, "Run tests against local HTTP, TCP, TLS, UDP, DNS, webhook, and SQLite fixtures":
   runIntegrationTests()
 
 task test, "Run all tests":

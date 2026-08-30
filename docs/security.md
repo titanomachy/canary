@@ -9,8 +9,9 @@ Canary validates configuration before it performs network I/O or starts a helper
 process. This includes positive timeouts, retry thresholds of at least one,
 ports from 1 through 65535, HTTP status codes from 100 through 599, supported
 HTTP methods, non-negative redirect and TLS thresholds, syntactically valid
-hostnames/IP addresses and headers, valid expected DNS IP addresses, exactly one
-target, and ICMP packet counts from 1 through 100.
+hostnames/IP addresses and headers, typed expected DNS record values, TCP probe
+payloads no larger than 65,536 bytes, exactly one target, and ICMP packet counts
+from 1 through 100.
 
 Invalid configuration writes a concise diagnostic to stderr and exits with `2`.
 A valid check that times out, cannot connect, receives an unexpected response,
@@ -50,6 +51,10 @@ Notification delivery errors include at most a public scheme and hostname. Raw
 HTTP, socket, resolver, OpenSSL, and notification exception messages are not
 shown because upstream libraries can embed full URLs or credentials in those
 messages.
+
+TCP request bytes, expected substrings, and received banners are likewise not
+included in result messages or details. A mismatch reports only the byte count,
+so credentials or protocol data cannot be copied into state or notifications.
 
 Notification URLs and authorization headers can be loaded from
 `CANARY_NOTIFY` and `CANARY_HEADERS`. Prefer those environment inputs or a

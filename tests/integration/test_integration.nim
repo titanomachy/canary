@@ -2,7 +2,7 @@ import nim_sqlite
 import std/[monotimes, net, options, os, osproc, streams, strutils, times,
             unittest]
 import ../../src/[common, notifier, process_runner]
-import ../../src/checks/[httpcheck, sslcheck, udpcheck]
+import ../../src/checks/[dnscheck, httpcheck, sslcheck, tcpcheck, udpcheck]
 import ../test_support
 
 proc readState(dbPath: string, jobId: string): tuple[status: string,
@@ -66,6 +66,45 @@ suite "local HTTP and UDP checks":
     check "Required text missing" in contentResult.details
     contentServer.waitForSuccess()
 
+  test "HTTP range, header, regex, and JSON assertions compose":
+    var server = startLocalServer("http-json")
+    defer: server.stop()
+    let result = checkHttp(
+      "http://127.0.0.1:" & $server.port & "/health",
+      timeoutMs = 1000,
+      statusRange = "2xx,304",
+      responseHeader = "X-Canary-State: ready",
+      bodyRegex = "\"status\"\\s*:\\s*\"ready\"",
+      jsonField = "replicas.0.healthy=true"
+    )
+    check result.isOk
+    check result.details.startsWith("Status: 202")
+    server.waitForSuccess()
+
+  test "HTTP maximum latency and JSON mismatches produce DOWN results":
+    var slowServer = startLocalServer("http-ok", ["--delay-ms=100"])
+    defer: slowServer.stop()
+    let slowResult = checkHttp(
+      "http://127.0.0.1:" & $slowServer.port & "/health",
+      timeoutMs = 1000,
+      maxLatencyMs = 25
+    )
+    check not slowResult.isOk
+    check "Maximum latency: 25ms" in slowResult.details
+    slowServer.waitForSuccess()
+
+    var jsonServer = startLocalServer("http-json")
+    defer: jsonServer.stop()
+    let jsonResult = checkHttp(
+      "http://127.0.0.1:" & $jsonServer.port & "/health",
+      timeoutMs = 1000,
+      statusRange = "2xx",
+      jsonField = "service.status=down"
+    )
+    check not jsonResult.isOk
+    check "JSON field mismatch" in jsonResult.details
+    jsonServer.waitForSuccess()
+
   test "UDP requires a matching response":
     var successServer = startLocalServer(
       "udp-echo", ["--response=pong:healthy"]
@@ -103,12 +142,125 @@ suite "local HTTP and UDP checks":
     check elapsed >= 50
     check elapsed < 1000
 
+suite "local TCP checks":
+  test "a server-first banner can satisfy an expected response":
+    var server = startLocalServer(
+      "tcp-banner", ["--response=SSH-2.0-Canary fixture\r\n"]
+    )
+    defer: server.stop()
+    let result = checkTcp(
+      "127.0.0.1", server.port, 1000, expected = "SSH-2.0-Canary"
+    )
+    check result.isOk
+    check result.details.startsWith("Expected response received")
+    server.waitForSuccess()
+
+  test "a request is sent before matching the response":
+    var server = startLocalServer(
+      "tcp-request",
+      ["--expected-request=PING\r\n", "--response=PONG ready\r\n"]
+    )
+    defer: server.stop()
+    let result = checkTcp(
+      "127.0.0.1", server.port, 1000, "PING\r\n", "PONG ready"
+    )
+    check result.isOk
+    check result.details.startsWith("Expected response received")
+    server.waitForSuccess()
+
+  test "a closed response without the expected substring is DOWN and redacted":
+    var server = startLocalServer(
+      "tcp-banner", ["--response=private banner contents"]
+    )
+    defer: server.stop()
+    let result = checkTcp(
+      "127.0.0.1", server.port, 1000, expected = "secret expectation"
+    )
+    check not result.isOk
+    check "Expected response not received" in result.details
+    for secret in ["private banner contents", "secret expectation"]:
+      check secret notin result.message
+      check secret notin result.details
+    server.waitForSuccess()
+
+  test "the total TCP deadline bounds an unresponsive banner":
+    var server = startLocalServer("tcp-silent", ["--delay-ms=250"])
+    defer: server.stop()
+    let started = getMonoTime()
+    let result = checkTcp(
+      "127.0.0.1", server.port, 75, expected = "banner"
+    )
+    let elapsed = (getMonoTime() - started).inMilliseconds
+    check not result.isOk
+    check result.details == "Timeout"
+    check elapsed >= 50
+    check elapsed < 1000
+    server.waitForSuccess()
+
+suite "local DNS checks":
+  test "all supported record types are decoded through a chosen resolver":
+    let cases = @[
+      ("A", @["192.0.2.10", "192.0.2.11"]),
+      ("AAAA", @["2001:db8::10"]),
+      ("CNAME", @["alias.fixture.test"]),
+      ("MX", @["10 mail1.fixture.test", "20 mail2.fixture.test"]),
+      ("TXT", @["canary=ready", "region=eu"])
+    ]
+    for (recordType, expectedValues) in cases:
+      var server = startLocalServer("dns")
+      defer: server.stop()
+      let result = checkDns(
+        "fixture.test", recordType, expectedValues,
+        "127.0.0.1:" & $server.port, 1000
+      )
+      checkpoint(recordType & ": " & result.details)
+      check result.isOk
+      for expected in expectedValues:
+        check expected in result.details
+      server.waitForSuccess()
+
+  test "every configured DNS value is required but extra answers are allowed":
+    var successServer = startLocalServer("dns")
+    defer: successServer.stop()
+    let success = checkDns(
+      "fixture.test", "A", @["192.0.2.10"],
+      "127.0.0.1:" & $successServer.port, 1000
+    )
+    check success.isOk
+    check "192.0.2.11" in success.details
+    successServer.waitForSuccess()
+
+    var mismatchServer = startLocalServer("dns")
+    defer: mismatchServer.stop()
+    let mismatch = checkDns(
+      "fixture.test", "A", @["192.0.2.12"],
+      "127.0.0.1:" & $mismatchServer.port, 1000
+    )
+    check not mismatch.isOk
+    check "Missing: 192.0.2.12" in mismatch.details
+    mismatchServer.waitForSuccess()
+
+  test "DNS timeout bounds an unresponsive selected resolver":
+    let reservation = newSocket(AF_INET, SOCK_DGRAM, IPPROTO_UDP)
+    defer: reservation.close()
+    reservation.bindAddr(Port(0), "127.0.0.1")
+    let port = reservation.getLocalAddr()[1]
+    let started = getMonoTime()
+    let result = checkDns(
+      "fixture.test", "TXT", @[], "127.0.0.1:" & $port, 75
+    )
+    let elapsed = (getMonoTime() - started).inMilliseconds
+    check not result.isOk
+    check result.details == "Timeout"
+    check elapsed >= 50
+    check elapsed < 1000
+
 suite "local webhook delivery":
   test "successful webhook delivery returns true":
     var server = startLocalServer("webhook-ok")
     defer: server.stop()
     check sendNotifications(
-      "http://127.0.0.1:" & $server.port & "/hook", "Canary test", 1000
+      @["http://127.0.0.1:" & $server.port & "/hook"], "Canary test", 1000
     )
     server.waitForSuccess()
 
@@ -117,7 +269,7 @@ suite "local webhook delivery":
     defer: server.stop()
     let started = getMonoTime()
     check sendNotifications(
-      "http://127.0.0.1:" & $server.port & "/hook", "Canary test", 1000
+      @["http://127.0.0.1:" & $server.port & "/hook"], "Canary test", 1000
     )
     check (getMonoTime() - started).inMilliseconds >= 100
     server.waitForSuccess()
@@ -126,7 +278,7 @@ suite "local webhook delivery":
     var failureServer = startLocalServer("webhook-fail")
     defer: failureServer.stop()
     check not sendNotifications(
-      "http://127.0.0.1:" & $failureServer.port & "/hook",
+      @["http://127.0.0.1:" & $failureServer.port & "/hook"],
       "Canary test",
       1000
     )
@@ -135,7 +287,7 @@ suite "local webhook delivery":
     var slowServer = startLocalServer("webhook-slow", ["--delay-ms=250"])
     defer: slowServer.stop()
     check not sendNotifications(
-      "http://127.0.0.1:" & $slowServer.port & "/hook", "Canary test", 50
+      @["http://127.0.0.1:" & $slowServer.port & "/hook"], "Canary test", 50
     )
 
 suite "local TLS certificate check":

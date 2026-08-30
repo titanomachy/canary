@@ -14,7 +14,7 @@ type
     ## Options shared by every check. The CLI is only one possible source for
     ## this model; TOML and environment adapters can populate the same fields.
     checkId*: string
-    notifyUrl*: string
+    notifyUrls*: seq[string]
     dbPath*: string
     retries*: int
     recoveryThreshold*: int
@@ -29,6 +29,11 @@ type
     httpMethod*: string
     body*: string
     maxRedirects*: int
+    statusRange*: string
+    maxLatencyMs*: int
+    responseHeader*: string
+    bodyRegex*: string
+    jsonField*: string
 
   SslConfig* = object
     host*: string
@@ -39,6 +44,8 @@ type
   TcpConfig* = object
     host*: string
     port*: int
+    request*: string
+    expected*: string
     timeoutMs*: int
 
   UdpConfig* = object
@@ -50,7 +57,10 @@ type
 
   DnsConfig* = object
     host*: string
-    expected*: string
+    recordType*: string
+    expectedValues*: seq[string]
+    resolver*: string
+    timeoutMs*: int
 
   IcmpConfig* = object
     host*: string
@@ -103,7 +113,12 @@ proc validate*(config: CanaryConfig) =
       config.common.retries,
       http.expectedStatus,
       http.maxRedirects,
-      http.httpMethod
+      http.httpMethod,
+      http.statusRange,
+      http.maxLatencyMs,
+      http.responseHeader,
+      http.bodyRegex,
+      http.jsonField
     )
     validateHttpHeaders(http.headers)
   of ckSsl:
@@ -118,6 +133,7 @@ proc validate*(config: CanaryConfig) =
     validateCommon(tcp.timeoutMs, config.common.retries)
     validatePort(tcp.port)
     validateHostname(tcp.host)
+    validateTcpProbe(tcp.request, tcp.expected)
   of ckUdp:
     let udp = config.udpConfig
     validateCommon(udp.timeoutMs, config.common.retries)
@@ -125,8 +141,10 @@ proc validate*(config: CanaryConfig) =
     validateHostname(udp.host)
   of ckDns:
     let dns = config.dnsConfig
+    validateCommon(dns.timeoutMs, config.common.retries)
     validateHostname(dns.host)
-    validateExpectedIp(dns.expected)
+    validateDnsExpectedValues(dns.recordType, dns.expectedValues)
+    discard splitDnsResolver(dns.resolver)
   of ckIcmp:
     let icmp = config.icmpConfig
     validateCommon(icmp.timeoutMs, config.common.retries)
@@ -149,6 +167,14 @@ proc resolvedCheckId*(config: CanaryConfig): string =
   of ckUdp:
     makeCheckId("udp", config.udpConfig.host, config.udpConfig.port)
   of ckDns:
-    makeCheckId("dns", config.dnsConfig.host)
+    let dns = config.dnsConfig
+    let normalizedType = normalizedDnsRecordType(dns.recordType)
+    if normalizedType == "A" and dns.resolver.len == 0:
+      makeCheckId("dns", dns.host)
+    else:
+      makeCheckId(
+        "dns_" & normalizedType.toLowerAscii(),
+        dns.host & (if dns.resolver.len > 0: "_" & dns.resolver else: "")
+      )
   of ckIcmp:
     makeCheckId("icmp", config.icmpConfig.host)

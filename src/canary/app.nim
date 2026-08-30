@@ -18,14 +18,21 @@ proc executeCheck*(config: CanaryConfig): CheckResult =
       http.headers,
       http.httpMethod,
       http.body,
-      http.maxRedirects
+      http.maxRedirects,
+      http.statusRange,
+      http.maxLatencyMs,
+      http.responseHeader,
+      http.bodyRegex,
+      http.jsonField
     )
   of ckSsl:
     let ssl = config.sslConfig
     checkSsl(ssl.host, ssl.minDays, ssl.port, ssl.timeoutMs)
   of ckTcp:
     let tcp = config.tcpConfig
-    checkTcp(tcp.host, tcp.port, tcp.timeoutMs)
+    checkTcp(
+      tcp.host, tcp.port, tcp.timeoutMs, tcp.request, tcp.expected
+    )
   of ckUdp:
     let udp = config.udpConfig
     checkUdp(
@@ -37,7 +44,13 @@ proc executeCheck*(config: CanaryConfig): CheckResult =
     )
   of ckDns:
     let dns = config.dnsConfig
-    checkDns(dns.host, dns.expected)
+    checkDns(
+      dns.host,
+      dns.recordType,
+      dns.expectedValues,
+      dns.resolver,
+      dns.timeoutMs
+    )
   of ckIcmp:
     let icmp = config.icmpConfig
     checkIcmp(icmp.host, icmp.count, icmp.timeoutMs)
@@ -45,7 +58,7 @@ proc executeCheck*(config: CanaryConfig): CheckResult =
 proc stateTrackingRequested(common: CommonConfig): bool =
   ## Notifications need state to detect transitions; otherwise persistence is
   ## opt-in through the model or the established CANARY_DB environment input.
-  common.notifyUrl.len > 0 or common.dbPath.len > 0 or
+  common.notifyUrls.len > 0 or common.dbPath.len > 0 or
     getEnv("CANARY_DB").len > 0
 
 proc run*(config: CanaryConfig): int =
@@ -67,7 +80,7 @@ proc run*(config: CanaryConfig): int =
     deliveries = processStateAndNotify(
       config.resolvedCheckId(),
       checkResult.isOk,
-      config.common.notifyUrl,
+      config.common.notifyUrls,
       config.common.dbPath,
       config.common.retries,
       config.common.recoveryThreshold,

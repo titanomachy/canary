@@ -40,40 +40,86 @@ retries = 2
 recoveryThreshold = 2
 json = false
 db = "/var/lib/canary/state.db"
+# Store real URLs only in a protected, untracked file.
+notify = ["https://hooks.example.invalid/private-token"]
 
 [http]
 timeout = 3000
 status = 200
 maxRedirects = 3
+# statusRange = "2xx,304" # Replaces the exact status assertion when set.
+# maxLatency = 500
+# responseHeader = "Content-Type: application/json"
+# regex = "ready|healthy"
+# jsonField = "service.status=ready"
 
 [ssl]
 timeout = 5000
 minDays = 21
 port = 443
+
+[tcp]
+timeout = 3000
+# request = "PING\r\n"
+# expected = "PONG"
+
+[dns]
+timeout = 3000
+type = "A"
+# resolver = "1.1.1.1"
+# expected = ["192.0.2.10", "192.0.2.11"]
 ```
 
 The common keys are `id`, `notify`, `db`, `retries`, `recoveryThreshold`, and
-`json`. `retries` is the failure threshold retained for CLI compatibility;
+`json`. `notify` is a TOML array of notification URLs. `retries` is the failure
+threshold retained for CLI compatibility;
 `recoveryThreshold` is the number of consecutive successful checks required to
 leave `DOWN`. Available command keys are:
 
 | Table | Keys |
 | --- | --- |
-| `[http]` | `timeout`, `status`, `search`, `headers`, `methodStr`, `body`, `maxRedirects` |
+| `[http]` | `timeout`, `status`, `statusRange`, `maxLatency`, `search`, `regex`, `headers`, `responseHeader`, `jsonField`, `methodStr`, `body`, `maxRedirects` |
 | `[ssl]` | `minDays`, `port`, `timeout` |
-| `[tcp]` | `port`, `timeout` |
+| `[tcp]` | `port`, `request`, `expected`, `timeout` |
 | `[udp]` | `port`, `payload`, `expected`, `timeout` |
-| `[dns]` | `expected` |
+| `[dns]` | `type`, `expected`, `resolver`, `timeout` |
 | `[icmp]` | `count`, `timeout` |
 
 Targets (`url` or `host`) are intentionally not loaded from TOML or the
 environment. Supply exactly one target after the command.
 
+`status` checks one exact HTTP code. A non-empty `statusRange` replaces it and
+accepts a comma-separated combination of exact codes (`204`), inclusive ranges
+(`200-299`), and classes (`2xx`). `responseHeader = "Name"` checks presence;
+adding `: value` also requires that substring in the response value.
+`jsonField` traverses objects with dotted components and arrays with numeric
+components, then compares the scalar's plain text exactly—for example,
+`replicas.0.healthy=true`. Assertions are combined: every configured assertion
+must pass. Use an explicit `id` when the same URL has multiple assertion sets
+that need independent retry and notification state.
+
+DNS `type` accepts `A`, `AAAA`, `CNAME`, `MX`, or `TXT`. `expected` is an array
+of required answers; extra answers do not fail the check. MX expectations use
+`priority hostname`, such as `10 mail.example.test`. `resolver` accepts an IP
+literal with an optional port (`192.0.2.53:5353` or `[2001:db8::53]:5353`); an
+empty value uses the first nameserver in `/etc/resolv.conf`. The DNS timeout
+bounds the whole UDP query and any TCP retry needed for a truncated response.
+
+For TCP, `request` is optional and is transmitted verbatim after connecting.
+A non-empty `expected` requires that substring in the response; without a
+request, this matches a server-first banner. The timeout is one total deadline
+for connecting, sending, and receiving. Requests, expectations, and buffered
+responses are limited to 65,536 bytes. With neither key, TCP remains a
+connect-only check. Use an explicit `id` when multiple probes against the same
+host and port need independent retry and notification state.
+
 ## Environment variables and secrets
 
 Environment names use the `CANARY_` prefix and the uppercased option name:
 `CANARY_RETRIES`, `CANARY_RECOVERYTHRESHOLD`, `CANARY_DB`, `CANARY_TIMEOUT`,
-`CANARY_STATUS`, `CANARY_NOTIFY`, and `CANARY_HEADERS`, for example. Camel-case
+`CANARY_STATUS`, `CANARY_STATUSRANGE`, `CANARY_MAXLATENCY`, `CANARY_NOTIFY`,
+`CANARY_REQUEST`, `CANARY_EXPECTED`, `CANARY_TYPE`, `CANARY_RESOLVER`, and
+`CANARY_HEADERS`, for example. Camel-case
 option names do not gain an extra underscore: use `CANARY_MINDAYS` and
 `CANARY_MAXREDIRECTS`.
 
@@ -85,6 +131,32 @@ export CANARY_NOTIFY='https://hooks.example.invalid/private-token'
 export CANARY_HEADERS='Authorization: Bearer private-token'
 canary http https://api.example.test/health
 ```
+
+Use one URL in `CANARY_NOTIFY`, or separate multiple URLs with a newline. On
+the CLI, repeat `--notify URL` once per endpoint; comma-splitting is not used.
+A separately protected, untracked TOML file may instead contain a `notify`
+array. Avoid command-line notification URLs because process arguments are
+commonly visible to other local tooling.
+
+Test credentials and provider payload compatibility without changing check
+state:
+
+```bash
+CANARY_NOTIFY='https://hooks.slack.com/services/...' \
+  canary notify test slack
+```
+
+The supported provider names are `slack`, `discord`, `pushover`, and `webhook`.
+The command exits `0` after successful delivery, `1` after a delivery failure,
+and `2` for invalid configuration or a provider/URL mismatch. Output contains
+only the scheme and host, never the webhook path, query, or credentials.
+
+Generic `http` and `https` webhooks receive one JSON POST containing both
+`text` and `content`, with the same notification message in each field. This
+keeps the generic contract usable by simple receivers while Slack receives
+only `text` and Discord only `content`. Any HTTP 2xx response is success; every
+other status or transport failure remains eligible for durable retry when the
+notification originated from a check transition.
 
 Environment variables are still visible to the process and may be observable
 to sufficiently privileged local users. Protect service-manager environment

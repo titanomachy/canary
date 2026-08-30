@@ -2,6 +2,7 @@ import nim_sqlite
 import std/[json, net, options, os, osproc, streams, strtabs, strutils, times,
             unittest]
 import ../../src/canary_contract
+import ../test_support
 
 type CliResult = object
   exitCode: int
@@ -78,7 +79,7 @@ suite "Canary CLI compatibility contract":
     let result = runCanary(["--help"])
     result.describe()
     check result.exitCode == 0
-    for command in ["http", "ssl", "tcp", "udp", "dns", "icmp"]:
+    for command in ["http", "ssl", "tcp", "udp", "dns", "icmp", "notify"]:
       check result.stdout.contains(command)
     check result.stderr.len == 0
 
@@ -88,10 +89,31 @@ suite "Canary CLI compatibility contract":
     check result.exitCode == 0
     check result.stdout.contains("--timeout")
     check result.stdout.contains("--status")
+    check result.stdout.contains("--statusRange")
+    check result.stdout.contains("--maxLatency")
+    check result.stdout.contains("--responseHeader")
+    check result.stdout.contains("--regex")
+    check result.stdout.contains("--jsonField")
     check result.stdout.contains("--json")
     check result.stdout.contains("--id")
     check result.stdout.contains("--config")
     check result.stdout.contains("--recoveryThreshold")
+    check result.stderr.len == 0
+
+  test "DNS help describes record, resolver, expectation, and timeout options":
+    let result = runCanary(["dns", "--help"])
+    result.describe()
+    check result.exitCode == ExitUp
+    for option in ["--type", "--expected", "--resolver", "--timeout"]:
+      check option in result.stdout
+    check result.stderr.len == 0
+
+  test "TCP help describes request, banner matching, and timeout options":
+    let result = runCanary(["tcp", "--help"])
+    result.describe()
+    check result.exitCode == ExitUp
+    for option in ["--request", "--expected", "--timeout"]:
+      check option in result.stdout
     check result.stderr.len == 0
 
   test "version comes from the canonical contract":
@@ -268,6 +290,9 @@ suite "Canary CLI compatibility contract":
       @["http", "http://127.0.0.1", "--methodStr", "BREW"],
       @["tcp", "bad host", "--port", "80"],
       @["dns", "example.test", "--expected", "not-an-ip"],
+      @["dns", "example.test", "--type", "SRV"],
+      @["dns", "example.test", "--resolver", "resolver.example.test"],
+      @["dns", "example.test", "--timeout", "0"],
       @["icmp", "127.0.0.1", "--count", "0"],
       @["icmp", "127.0.0.1", "--count", "101"]
     ]:
@@ -276,6 +301,24 @@ suite "Canary CLI compatibility contract":
       check result.exitCode == ExitConfigError
       check result.stdout.len == 0
       check result.stderr.startsWith("Configuration error:")
+
+  test "DNS record type and repeated expectations work through the CLI":
+    var server = startLocalServer("dns")
+    defer: server.stop()
+    let result = runCanary([
+      "dns", "fixture.test", "--type", "MX",
+      "--expected", "10 mail1.fixture.test",
+      "--expected", "20 mail2.fixture.test",
+      "--resolver", "127.0.0.1:" & $server.port,
+      "--timeout", "1000", "--json"
+    ])
+    result.describe()
+    check result.exitCode == ExitUp
+    let payload = parseJson(result.stdout)
+    check payload["status"].getStr() == "UP"
+    check "10 mail1.fixture.test" in payload["details"].getStr()
+    check "20 mail2.fixture.test" in payload["details"].getStr()
+    server.waitForSuccess()
 
   test "unknown HTTP methods are rejected before network access":
     let result = runCanary([
@@ -307,6 +350,26 @@ suite "Canary CLI compatibility contract":
     check result.exitCode == 0
     check result.stdout.contains("TCP OK")
     check result.stderr.len == 0
+
+  test "TCP request and expected response work through the CLI":
+    var server = startLocalServer(
+      "tcp-request",
+      ["--expected-request=PING", "--response=PONG: healthy"]
+    )
+    defer: server.stop()
+    let result = runCanary([
+      "tcp", "127.0.0.1", "--port", $server.port,
+      "--request", "PING", "--expected", "healthy", "--timeout", "1000",
+      "--json"
+    ])
+    result.describe()
+    check result.exitCode == ExitUp
+    let payload = parseJson(result.stdout)
+    check payload["status"].getStr() == "UP"
+    check payload["details"].getStr().startsWith(
+      "Expected response received"
+    )
+    server.waitForSuccess()
 
   test "refused connection is a completed DOWN check":
     let (reservation, port) = reservedPort()
@@ -381,6 +444,59 @@ suite "Canary CLI compatibility contract":
     check payload["notifications"][0]["status"].getStr() == "retry"
     check payload["notifications"][0]["attempt"].getInt() == 1
     check "must-not-leak" notin result.stdout
+    check "must-not-leak" notin result.stderr
+
+  test "repeated notify options create separate outbox events":
+    let (reservation, port) = reservedPort()
+    defer: reservation.close()
+    let testDir = getTempDir() / (
+      "canary-cli-repeated-notify-" & $getCurrentProcessId() & "-" &
+      $(epochTime() * 1_000_000).int64
+    )
+    createDir(testDir)
+    defer: removeDir(testDir)
+
+    let result = runCanary([
+      "tcp", "127.0.0.1", "--port", $port, "--timeout", "500",
+      "--json", "--db", testDir / "state.db",
+      "--notify", "mock://first-secret",
+      "--notify", "mock://second-secret"
+    ])
+    result.describe()
+    check result.exitCode == ExitDown
+    let payload = parseJson(result.stdout)
+    check payload["notifications"].len == 2
+    for secret in ["first-secret", "second-secret"]:
+      check secret notin result.stdout
+      check secret notin result.stderr
+
+  test "notification test loads its secret from the environment":
+    var webhook = startLocalServer("webhook-ok")
+    defer: webhook.stop()
+    let notifyUrl = "http://127.0.0.1:" & $webhook.port &
+      "/private-hook?token=secret"
+
+    let result = runCanary(
+      ["notify", "test", "webhook"],
+      @[("CANARY_NOTIFY", notifyUrl)]
+    )
+    result.describe()
+    check result.exitCode == ExitUp
+    check result.stdout.contains("Notification test delivered via webhook")
+    for secret in ["private-hook", "token", "secret"]:
+      check secret notin result.stdout
+      check secret notin result.stderr
+    webhook.waitForSuccess()
+
+  test "notification test rejects a provider mismatch before delivery":
+    let result = runCanary([
+      "notify", "test", "slack",
+      "--notify", "https://discord.com/api/webhooks/must-not-leak"
+    ])
+    result.describe()
+    check result.exitCode == ExitConfigError
+    check result.stdout.len == 0
+    check result.stderr.contains("Slack notification URLs")
     check "must-not-leak" notin result.stderr
 
   test "explicit IDs keep state separate for checks on the same target":

@@ -2,16 +2,16 @@ import confutils
 import confutils/toml/defs
 import std/[os, strutils]
 import toml_serialization
-import ../[canary_contract, common]
+import ../[canary_contract, common, notifier]
 import app, config
 
 type
   CanaryCommand* {.pure.} = enum
     http = "Check HTTP/HTTPS service availability and response"
     ssl = "Check days remaining until an SSL/TLS certificate expires"
-    tcp = "Check whether a TCP port accepts connections"
+    tcp = "Check a TCP connection or protocol response"
     udp = "Send a UDP datagram and require a response"
-    dns = "Resolve a domain, optionally matching an expected IP"
+    dns = "Query A, AAAA, CNAME, MX, or TXT DNS records"
     icmp = "Check ICMP ping reachability"
 
   CommonCliConfig* = object
@@ -19,11 +19,12 @@ type
       name: "id"
       defaultValue: ""
       desc: "Explicit state identity for this check" .}: string
-    notifyUrl* {.
+    notifyUrls* {.
       name: "notify"
       abbr: "n"
-      defaultValue: ""
-      desc: "Notification URL(s) separated by commas" .}: string
+      defaultValue: @[]
+      envVarValueSep: "\n"
+      desc: "Notification URL (repeat for multiple endpoints)" .}: seq[string]
     dbPath* {.
       name: "db"
       abbr: "d"
@@ -78,6 +79,26 @@ type
       name: "maxRedirects"
       defaultValue: 5
       desc: "Maximum number of redirects to follow" .}: int
+    statusRange* {.
+      name: "statusRange"
+      defaultValue: ""
+      desc: "Accepted statuses, e.g. 2xx,200-204,304" .}: string
+    maxLatencyMs* {.
+      name: "maxLatency"
+      defaultValue: 0
+      desc: "Maximum response latency in milliseconds (0 disables)" .}: int
+    responseHeader* {.
+      name: "responseHeader"
+      defaultValue: ""
+      desc: "Required response header as Name or Name: value" .}: string
+    bodyRegex* {.
+      name: "regex"
+      defaultValue: ""
+      desc: "Regular expression required in the response body" .}: string
+    jsonField* {.
+      name: "jsonField"
+      defaultValue: ""
+      desc: "Required JSON scalar as dotted.path=value" .}: string
 
   SslCliConfig* = object
     host* {.
@@ -109,6 +130,12 @@ type
     port* {.
       abbr: "p"
       desc: "TCP port number" .}: int
+    request* {.
+      defaultValue: ""
+      desc: "Optional bytes to send after connecting" .}: string
+    expected* {.
+      defaultValue: ""
+      desc: "Required response or server banner substring" .}: string
     timeoutMs* {.
       name: "timeout"
       abbr: "t"
@@ -142,9 +169,23 @@ type
       name: "host"
       defaultValue: ""
       desc: "Domain name to resolve" .}: string
-    expected* {.
+    recordType* {.
+      name: "type"
+      defaultValue: "A"
+      desc: "DNS record type: A, AAAA, CNAME, MX, or TXT" .}: string
+    expectedValues* {.
+      name: "expected"
+      defaultValue: @[]
+      envVarValueSep: "\n"
+      desc: "Required answer value (repeat for multiple values)" .}: seq[string]
+    resolver* {.
       defaultValue: ""
-      desc: "Expected resolved IP address" .}: string
+      desc: "DNS resolver IP with optional port (default: system resolver)" .}: string
+    timeoutMs* {.
+      name: "timeout"
+      abbr: "t"
+      defaultValue: 5000
+      desc: "Timeout in milliseconds" .}: int
 
   IcmpCliConfig* = object
     host* {.
@@ -186,12 +227,14 @@ const
   ValueOptions = [
     "--config", "--id", "--notify", "--db", "--retries", "-n", "-d",
     "-r", "--recoveryThreshold", "--timeout", "--status", "--search", "--headers", "--methodStr",
-    "--body", "--maxRedirects", "--minDays", "--port", "--payload",
-    "--expected", "--count", "-t", "-s", "-m", "-b", "-p"
+    "--body", "--maxRedirects", "--statusRange", "--maxLatency",
+    "--responseHeader", "--regex", "--jsonField", "--minDays", "--port",
+    "--request", "--payload", "--expected", "--type", "--resolver",
+    "--count", "-t", "-s", "-m", "-b", "-p"
   ]
   BooleanOptions = ["--json", "-j", "--help", "--version"]
   NumericOptions = [
-    "--retries", "--recoveryThreshold", "--timeout", "--status", "--maxRedirects", "--minDays",
+    "--retries", "--recoveryThreshold", "--timeout", "--status", "--maxRedirects", "--maxLatency", "--minDays",
     "--port", "--count", "-r", "-t", "-s", "-m", "-p"
   ]
 
@@ -277,7 +320,7 @@ proc loadCliConfig*(arguments: seq[string]): CliConfig =
 proc commonConfig(input: CommonCliConfig): CommonConfig =
   CommonConfig(
     checkId: input.checkId,
-    notifyUrl: input.notifyUrl,
+    notifyUrls: input.notifyUrls,
     dbPath: input.dbPath,
     retries: input.retries,
     recoveryThreshold: input.recoveryThreshold,
@@ -305,7 +348,12 @@ proc toCanaryConfig*(input: CliConfig): CanaryConfig =
         headers: http.headers,
         httpMethod: http.methodStr,
         body: http.body,
-        maxRedirects: http.maxRedirects
+        maxRedirects: http.maxRedirects,
+        statusRange: http.statusRange,
+        maxLatencyMs: http.maxLatencyMs,
+        responseHeader: http.responseHeader,
+        bodyRegex: http.bodyRegex,
+        jsonField: http.jsonField
       )
     )
   of CanaryCommand.ssl:
@@ -328,6 +376,8 @@ proc toCanaryConfig*(input: CliConfig): CanaryConfig =
       tcpConfig: TcpConfig(
         host: requireTarget(tcp.host, "no host specified"),
         port: tcp.port,
+        request: tcp.request,
+        expected: tcp.expected,
         timeoutMs: tcp.timeoutMs
       )
     )
@@ -351,7 +401,10 @@ proc toCanaryConfig*(input: CliConfig): CanaryConfig =
       common: common,
       dnsConfig: DnsConfig(
         host: requireTarget(dns.host, "no hostname specified"),
-        expected: dns.expected
+        recordType: dns.recordType,
+        expectedValues: dns.expectedValues,
+        resolver: dns.resolver,
+        timeoutMs: dns.timeoutMs
       )
     )
   of CanaryCommand.icmp:
@@ -366,27 +419,82 @@ proc toCanaryConfig*(input: CliConfig): CanaryConfig =
       )
     )
 
+proc runNotificationTest(arguments: seq[string]): int =
+  if arguments.len == 1 or arguments == @["notify", "--help"] or
+      arguments == @["notify", "test", "--help"]:
+    stdout.writeLine(
+      "Usage: canary notify test <slack|discord|pushover|webhook> " &
+        "[--notify URL]... [--config PATH]"
+    )
+    return ExitUp
+  if arguments.len < 3 or arguments[1] != "test":
+    raise newException(
+      CanaryConfigError,
+      "expected 'canary notify test <provider>'"
+    )
+
+  let providerName = arguments[2]
+  let provider = parseNotificationProvider(providerName)
+  let optionArguments = if arguments.len > 3: arguments[3 .. ^1] else: @[]
+  for argument in optionArguments:
+    if argument.len > 0 and argument[0] == '-' and
+        argument.optionKey() notin ["--config", "--notify", "-n"]:
+      raise newException(
+        CanaryConfigError,
+        "unsupported notification-test option '" & argument.optionKey() & "'"
+      )
+
+  # Reuse the normal layered common configuration without introducing a
+  # second parser or a second TOML schema. The synthetic HTTP target is never
+  # validated or contacted.
+  let input = loadCliConfig(
+    @["http", "https://notification-test.invalid"] & optionArguments
+  )
+  if sendTestNotifications(provider, input.common.notifyUrls):
+    for notifyUrl in input.common.notifyUrls:
+      stdout.writeLine(
+        "Notification test delivered via " &
+          providerName.toLowerAscii() & " to " &
+          notificationTarget(notifyUrl)
+      )
+    ExitUp
+  else:
+    ExitDown
+
+proc printTopLevelHelp() =
+  stdout.writeLine("Canary " & CanaryVersion)
+  stdout.writeLine("")
+  stdout.writeLine("Usage: canary <command> [options]")
+  stdout.writeLine("")
+  stdout.writeLine("Check commands: http, ssl, tcp, udp, dns, icmp")
+  stdout.writeLine("Notification command: notify test <provider>")
+  stdout.writeLine("")
+  stdout.writeLine(
+    "Common options: --config, --id, --notify, --db, --retries, " &
+      "--recoveryThreshold, --json"
+  )
+  stdout.writeLine("Use 'canary <command> --help' for command-specific help.")
+
 proc runCli*(): int =
   let arguments = commandLineParams()
   if arguments == @["--version"]:
     stdout.writeLine(CanaryVersion)
     return ExitUp
+  if arguments.len == 0 or arguments == @["--help"]:
+    printTopLevelHelp()
+    return ExitUp
   if arguments.len > 0 and arguments[0].len > 0 and arguments[0][0] != '-' and
+      arguments[0] != "notify" and
       arguments[0] notin Commands:
     stderr.writeLine("Unknown command '" & arguments[0] & "'")
     return ExitConfigError
 
-  if arguments.len == 0:
-    discard CliConfig.load(
-      cmdLine = @["--help"],
-      version = CanaryVersion,
-      copyrightBanner = "Canary " & CanaryVersion,
-      envVarsPrefix = "CANARY"
-    )
-
   try:
-    let input = loadCliConfig(arguments)
-    run(input.toCanaryConfig())
+    if arguments.len > 0 and arguments[0] == "notify":
+      runNotificationTest(arguments)
+    else:
+      let input = loadCliConfig(arguments)
+      run(input.toCanaryConfig())
   except ConfigurationError:
     stderr.writeLine(parserDiagnostic(arguments))
     ExitConfigError

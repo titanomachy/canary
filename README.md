@@ -1,6 +1,6 @@
 # canary
 
-A lightweight, stateless-by-default service health and uptime monitoring CLI in Nim. Designed to integrate seamlessly with schedulers like [Metronome-Web](https://github.com/titanomachy/Metronome-Web) as a self-hosted replacement for services like Uptime Robot.
+A lightweight, stateless-by-default service health and uptime monitoring CLI in Nim. Designed to integrate seamlessly with schedulers like [Metronome](https://github.com/titanomachy/Metronome)/[Metronome-Web](https://github.com/titanomachy/Metronome-Web) as a self-hosted replacement for services like Uptime Robot.
 
 ---
 
@@ -9,12 +9,12 @@ A lightweight, stateless-by-default service health and uptime monitoring CLI in 
 Many monitoring solutions are heavy background daemons bundling their own schedulers, web servers, and persistent services. **Canary** adheres to the Unix philosophy: *do one thing and do it well*.
 
 1. **Stateless & Fast:** Without `--db`, `CANARY_DB`, or `--notify`, Canary executes one targeted health check without writing state and exits immediately.
-2. **Orchestrated by Metronome-Web:** [Metronome-Web](https://github.com/titanomachy/Metronome-Web) manages the cron/interval schedule, asynchronous job execution, run history, and Apache ECharts latency visualisations.
+2. **Orchestrated by Metronome/Metronome-Web:** [Metronome](https://github.com/titanomachy/Metronome)/[Metronome-Web](https://github.com/titanomachy/Metronome-Web) manages the cron/interval schedule, asynchronous job execution, run history, and Apache ECharts latency visualisations.
 3. **Smart State Tracking & Alerting:** Powered by [nim-sqlite](https://github.com/titanomachy/nim-sqlite), Canary records endpoint status and failure counts in an embedded SQLite database (`~/.config/canary/state.db`). Notifications (Pushover, Slack, Discord, Webhooks) are dispatched **only on state transitions** (`UP -> DOWN` and `DOWN -> UP`), eliminating alert fatigue and false positives.
 
 ```text
 ┌────────────────────────────────────────────────────────────────────────┐
-│                             Metronome-Web                              │
+│                        Metronome/Metronome-Web                         │
 │ (Cron/Interval Scheduler, Multi-process Execution, Dashboard, Charts)  │
 └───────────────────────────────────┬────────────────────────────────────┘
                                     │
@@ -102,6 +102,12 @@ Monitor web applications, REST APIs, and websites with optional keyword matching
 ./canary http https://api.example.com/v1/ping \
   --methodStr POST --body '{"ping": true}' --status 201
 
+# Accept a status class and assert latency, a header, and JSON content
+./canary http https://api.example.com/v1/health \
+  --statusRange '2xx' --maxLatency 500 \
+  --responseHeader 'Content-Type: application/json' \
+  --jsonField 'service.status=ready'
+
 # Structured JSON output & Retries (alert only after 2 consecutive failures)
 ./canary http https://myapp.com --retries 2 --json --notify "https://hooks.slack.com/services/..."
 ```
@@ -112,15 +118,20 @@ Monitor web applications, REST APIs, and websites with optional keyword matching
 | `url` | `string` | *required* | Target URL to test (*positional argument*) |
 | `-t=, --timeout=` | `int` | `5000` | Timeout in milliseconds |
 | `-s=, --status=` | `int` | `200` | Expected HTTP status code |
+| `--statusRange=` | `string` | `""` | Accepted codes, ranges, or classes, such as `200,204,3xx` (overrides `--status`) |
+| `--maxLatency=` | `int` | `0` | Maximum response latency in milliseconds; `0` disables the assertion |
 | `--search=` | `string` | `""` | Substring that must be present in response body |
+| `--regex=` | `string` | `""` | Regular expression that must match the response body |
 | `--headers=` | `string` | `""` | Request headers separated by commas or newlines |
+| `--responseHeader=` | `string` | `""` | Required response header as `Name` or `Name: value-substring` |
+| `--jsonField=` | `string` | `""` | Required JSON scalar as `dotted.path=value`; numeric components index arrays |
 | `-m=, --methodStr=` | `string` | `"GET"` | HTTP method (`GET`, `POST`, `HEAD`, `PUT`, `DELETE`, `PATCH`, `OPTIONS`) |
 | `-b=, --body=` | `string` | `""` | Payload body for POST/PUT requests |
 | `--maxRedirects=` | `int` | `5` | Maximum number of redirects to follow |
 | `-r=, --retries=` | `int` | `1` | Consecutive failure count required before DOWN alert |
 | `--recoveryThreshold=` | `int` | `1` | Consecutive successes required before recovery alert |
 | `--id=` | `string` | `""` | Stable explicit state identity (recommended when a target has multiple assertions) |
-| `-n=, --notify=` | `string` | `""` | Notification URL(s) separated by commas |
+| `-n=, --notify=` | repeatable string | none | Notification URL; repeat for multiple endpoints |
 | `-d=, --db=` | `string` | `""` | Path to SQLite database (optional, see State Tracking) |
 | `-j, --json` | `bool` | `false` | Output result as structured JSON object |
 
@@ -163,7 +174,7 @@ Monitor certificate validity and days remaining before expiration.
 | `-r=, --retries=` | `int` | `1` | Consecutive failure count required before DOWN alert |
 | `--recoveryThreshold=` | `int` | `1` | Consecutive successes required before recovery alert |
 | `--id=` | `string` | `""` | Stable explicit state identity |
-| `-n=, --notify=` | `string` | `""` | Notification URL(s) |
+| `-n=, --notify=` | repeatable string | none | Notification URL; repeat for multiple endpoints |
 | `-j, --json` | `bool` | `false` | Output result as JSON object |
 
 #### Terminal Output Examples:
@@ -186,12 +197,27 @@ Verify network services (databases, SSH, mail servers) are listening and accepti
 
 # Check SSH on remote host with custom timeout and retries
 ./canary tcp 192.168.1.10 -p 22 --timeout 2000 --retries 2
+
+# Match a server-first SSH banner
+./canary tcp 192.168.1.10 -p 22 --expected "SSH-2.0-"
+
+# Send a protocol request and require a response substring
+./canary tcp 127.0.0.1 -p 9000 --request "PING" --expected "PONG"
 ```
+
+`--expected` waits for a matching response substring. It can be used without
+`--request` for server-first protocols such as SSH or SMTP banners. When
+`--request` is set, its bytes are sent verbatim before Canary reads the
+response. The single `--timeout` covers connection, transmission, and response
+matching. Omitting both options preserves the connect-only port check.
 
 #### Terminal Output Examples:
 ```text
 $ ./canary tcp example.com -p 443
 TCP OK - example.com:443 - Latency: 10ms
+
+$ ./canary tcp 127.0.0.1 -p 9000 --request PING --expected PONG
+TCP OK - 127.0.0.1:9000 - Latency: 1ms
 
 $ ./canary tcp example.com -p 444 --timeout 1000
 TCP TIMEOUT - example.com:444 - After 1001ms
@@ -223,21 +249,38 @@ ICMP OK - 127.0.0.1 - Latency: 4ms
 ---
 
 ### 5. DNS Resolution Checks (`canary dns`)
-Verify domain name resolution and optionally validate the resolved IP.
+Query `A`, `AAAA`, `CNAME`, `MX`, or `TXT` records with a bounded timeout.
+Canary uses the first nameserver in `/etc/resolv.conf` by default. Select a
+specific resolver with `--resolver IP` (an optional `:PORT` is supported for
+local/testing resolvers).
 
 ```bash
 # Basic DNS resolution
 ./canary dns example.com
 
-# Verify domain resolves to expected IP
-./canary dns example.com --expected "93.184.216.34"
+# Require both addresses; additional answers remain acceptable
+./canary dns example.com --type A \
+  --expected "192.0.2.10" --expected "192.0.2.11"
+
+# Query MX through a selected resolver
+./canary dns example.com --type MX \
+  --expected "10 mail.example.com" --resolver "1.1.1.1" --timeout 2000
+
+# TXT values are compared exactly and case-sensitively
+./canary dns example.com --type TXT --expected "canary=ready"
 ```
 
 #### Terminal Output Examples:
 ```text
 $ ./canary dns example.com
-DNS OK - example.com resolved to 93.184.216.34 - Latency: 7ms
+DNS OK - example.com A records: 192.0.2.10, 192.0.2.11 - Latency: 7ms
 ```
+
+`--expected` is repeatable. Every configured value must be present, while
+unconfigured extra answers are allowed. Names in `CNAME`/`MX` answers are
+matched case-insensitively without a trailing dot; `AAAA` values are
+canonicalized before comparison. Truncated UDP replies are retried over TCP
+within the same total timeout.
 
 ---
 
@@ -322,8 +365,9 @@ By default, Canary triggers an alert on the first failure (`--retries 1`). For u
 
 ## Notifications & Alerts
 
-Canary supports multiple notification endpoints simultaneously via a
-comma-separated list in `--notify` or `CANARY_NOTIFY`.
+Canary supports multiple notification endpoints simultaneously. Repeat
+`--notify URL` for CLI use, use a TOML `notify` array, or place one URL (multiple
+URLs separated by newlines) in `CANARY_NOTIFY`.
 
 Transition notifications use a durable SQLite outbox. State and outbox rows are
 committed atomically, and temporary failures are retried on later runs with
@@ -354,7 +398,8 @@ implementation uses two sequential invocations rather than a pipeline. See the
 ### Supported Notification Protocols:
 
 1. **Slack, Discord & Generic Webhooks (`http://` or `https://`):**
-   Sends a JSON payload: `{"text": "[ALERT] Canary: ... is DOWN!", "content": "..."}`
+   Generic webhooks receive both `text` and `content`; Slack receives `text`
+   and Discord receives `content`. Any HTTP 2xx response counts as success.
    ```bash
    --notify "https://hooks.slack.com/services/XXX/YYY/ZZZ"
    ```
@@ -367,14 +412,24 @@ implementation uses two sequential invocations rather than a pipeline. See the
 
 3. **Combined Multi-channel Notifications:**
    ```bash
-   --notify "pushover://USER@TOKEN,https://hooks.slack.com/services/..."
+   --notify "pushover://USER@TOKEN" \
+   --notify "https://hooks.slack.com/services/..."
    ```
+
+Prefer loading these URLs from `CANARY_NOTIFY` or a protected, untracked TOML
+file so credentials do not appear in process arguments. Verify a configured
+provider independently of check state with:
+
+```bash
+CANARY_NOTIFY='https://hooks.slack.com/services/...' \
+  canary notify test slack
+```
 
 ---
 
-## Integration with Metronome-Web
+## Integration with Metronome/Metronome-Web
 
-[Metronome-Web](https://github.com/titanomachy/Metronome-Web) serves as the scheduler and dashboard UI for Canary. Configure jobs in the Metronome-Web interface:
+[Metronome](https://github.com/titanomachy/Metronome)/[Metronome-Web](https://github.com/titanomachy/Metronome-Web) serves as the scheduler and dashboard UI for Canary. Configure jobs in the Metronome-Web interface.:
 
 | Job Name in Metronome-Web | Recommended Schedule | Example Command |
 | :--- | :--- | :--- |

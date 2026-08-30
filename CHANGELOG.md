@@ -32,6 +32,11 @@ All notable changes to Canary are documented in this file.
 - Security regression coverage for direct process arguments, process timeouts,
   URL and notification-error redaction, invalid methods, and command-fragment
   hostnames.
+- DNS queries for `A`, `AAAA`, `CNAME`, `MX`, and `TXT`, with repeatable
+  expected answers, explicit resolver selection, a total timeout, UDP-to-TCP
+  fallback for truncated replies, and deterministic local coverage.
+- Optional TCP request transmission and expected response or server-banner
+  matching, bounded by one total deadline and deterministic local fixtures.
 
 ### Changed
 
@@ -46,6 +51,8 @@ All notable changes to Canary are documented in this file.
 - A first failure below `--retries` is stored as `UNKNOWN`; it reaches `DOWN`
   and emits an alert only at the configured threshold.
 - UDP checks now require a response before the timeout and enforce `--expected`.
+- TCP checks retain connect-only behavior by default, while `--request` and
+  `--expected` enable application-level probes without logging probe contents.
 - Webhook delivery now treats non-2xx responses and timeouts as failures without
   changing the health-check exit code.
 - ICMP now has a bounded `--timeout` and invokes `ping` directly with an argv

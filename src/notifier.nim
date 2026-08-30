@@ -7,6 +7,12 @@ const
   MaxRetryDelaySeconds* = 300'i64
 
 type
+  NotificationProvider* = enum
+    npSlack,
+    npDiscord,
+    npPushover,
+    npWebhook
+
   NotificationSender* = proc(notifyUrl: string,
                              message: string): bool {.closure.}
 
@@ -109,15 +115,91 @@ proc sendSingleNotification(notifyUrl: string, message: string,
   finally:
     client.close()
 
-proc sendNotifications*(notifyUrls: string, message: string,
+proc sendNotifications*(notifyUrls: openArray[string], message: string,
                         timeoutMs: int = 5000): bool =
   ## Deliver to every configured endpoint and report aggregate success.
   result = true
-  if notifyUrls.len == 0:
-    return
-  for url in notifyUrls.split(','):
+  for url in notifyUrls:
     if not sendSingleNotification(url, message, timeoutMs):
       result = false
+
+proc sendNotifications*(notifyUrl: string, message: string,
+                        timeoutMs: int = 5000): bool =
+  ## Source-compatible single-endpoint API. Multiple endpoints use the
+  ## open-array overload; this overload intentionally does not comma-split.
+  sendNotifications([notifyUrl], message, timeoutMs)
+
+proc parseNotificationProvider*(value: string): NotificationProvider =
+  case value.toLowerAscii()
+  of "slack": npSlack
+  of "discord": npDiscord
+  of "pushover": npPushover
+  of "webhook": npWebhook
+  else:
+    raise newException(
+      CanaryConfigError,
+      "unknown notification provider '" & value &
+        "' (expected slack, discord, pushover, or webhook)"
+    )
+
+proc validateNotificationTarget*(provider: NotificationProvider,
+                                 notifyUrl: string) =
+  let trimmed = notifyUrl.strip()
+  if trimmed.len == 0:
+    raise newException(CanaryConfigError, "notification URL must not be empty")
+
+  var parsed: Uri
+  try:
+    parsed = parseUri(trimmed)
+  except ValueError:
+    raise newException(CanaryConfigError, "invalid notification URL")
+
+  let hostname = parsed.hostname.toLowerAscii()
+  case provider
+  of npSlack:
+    if parsed.scheme != "https" or hostname != "hooks.slack.com":
+      raise newException(
+        CanaryConfigError,
+        "Slack notification URLs must use https://hooks.slack.com"
+      )
+  of npDiscord:
+    if parsed.scheme != "https" or
+        hostname notin ["discord.com", "discordapp.com"]:
+      raise newException(
+        CanaryConfigError,
+        "Discord notification URLs must use https://discord.com or " &
+          "https://discordapp.com"
+      )
+  of npPushover:
+    let credentials = parsePushoverCredentials(trimmed)
+    if parsed.scheme != "pushover" or credentials.userKey.len == 0 or
+        credentials.apiToken.len == 0:
+      raise newException(
+        CanaryConfigError,
+        "Pushover notification URLs must use pushover://USER_KEY@API_TOKEN"
+      )
+  of npWebhook:
+    if parsed.scheme notin ["http", "https"] or hostname.len == 0:
+      raise newException(
+        CanaryConfigError,
+        "webhook notification URLs must use http or https"
+      )
+
+proc sendTestNotifications*(provider: NotificationProvider,
+                            notifyUrls: openArray[string],
+                            timeoutMs: int = 5000): bool =
+  ## Validate every target before delivering, avoiding partial delivery when
+  ## one endpoint was configured for a different provider.
+  if notifyUrls.len == 0:
+    raise newException(
+      CanaryConfigError,
+      "no notification URL configured; use CANARY_NOTIFY, TOML notify, or --notify"
+    )
+  for notifyUrl in notifyUrls:
+    validateNotificationTarget(provider, notifyUrl)
+  sendNotifications(
+    notifyUrls, "[TEST] Canary notification delivery test", timeoutMs
+  )
 
 proc addColumnIfMissing(db: DbConn, tableName, definition: string) =
   try:
@@ -156,7 +238,7 @@ proc initializeStore(db: DbConn) =
     db, "canary_state", "success_count INTEGER NOT NULL DEFAULT 0"
   )
 
-proc notificationUrls(raw: string): seq[string] =
+proc legacyNotificationUrls(raw: string): seq[string] =
   for candidate in raw.split(','):
     let target = candidate.strip()
     if target.len > 0:
@@ -181,9 +263,12 @@ proc retryDelaySeconds*(eventId: int64, attempt: int): int64 =
   let jitter = abs(eventId * 31 + int64(attempt) * 17) mod jitterRange
   min(baseDelay + jitter, MaxRetryDelaySeconds)
 
-proc enqueueTransition(db: DbConn, jobId, targets, message: string,
+proc enqueueTransition(db: DbConn, jobId: string, targets: openArray[string],
+                       message: string,
                        timestamp: int64) =
-  for target in notificationUrls(targets):
+  for target in targets:
+    if target.strip().len == 0:
+      continue
     db.exec(
       "INSERT INTO notification_outbox(" &
       "check_id, target, message, next_attempt, created_at" &
@@ -192,7 +277,7 @@ proc enqueueTransition(db: DbConn, jobId, targets, message: string,
     )
 
 proc recordTransition(db: DbConn, jobId: string, isOk: bool,
-                      notifyUrls: string, failureThreshold,
+                      notifyUrls: openArray[string], failureThreshold,
                       recoveryThreshold, latencyMs: int, cause: string,
                       timestamp: int64) =
   db.exec("BEGIN IMMEDIATE")
@@ -354,7 +439,8 @@ proc deliverOutbox(db: DbConn, sender: NotificationSender,
         nextAttempt: nextAttempt
       ))
 
-proc processStateAndNotify*(jobId: string, isOk: bool, notifyUrl: string,
+proc processStateAndNotify*(jobId: string, isOk: bool,
+                            notifyUrls: openArray[string],
                             dbPath: string = "", failureThreshold: int = 1,
                             recoveryThreshold: int = 1,
                             latencyMs: int = 0, cause: string = "",
@@ -369,7 +455,7 @@ proc processStateAndNotify*(jobId: string, isOk: bool, notifyUrl: string,
     defer: db.close()
     initializeStore(db)
     recordTransition(
-      db, jobId, isOk, notifyUrl, failureThreshold, recoveryThreshold,
+      db, jobId, isOk, notifyUrls, failureThreshold, recoveryThreshold,
       latencyMs, cause, timestamp
     )
     result = deliverOutbox(db, sender, timestamp)
@@ -378,6 +464,18 @@ proc processStateAndNotify*(jobId: string, isOk: bool, notifyUrl: string,
       "Error during state tracking in " & finalDbPath & ": " &
       getCurrentExceptionMsg()
     )
+
+proc processStateAndNotify*(jobId: string, isOk: bool, notifyUrl: string,
+                            dbPath: string = "", failureThreshold: int = 1,
+                            recoveryThreshold: int = 1,
+                            latencyMs: int = 0, cause: string = "",
+                            sender: NotificationSender = nil): seq[DeliveryResult] =
+  ## Compatibility overload for callers of the 0.1 API. The CLI and typed
+  ## configuration model use a real sequence and never comma-split options.
+  processStateAndNotify(
+    jobId, isOk, legacyNotificationUrls(notifyUrl), dbPath, failureThreshold,
+    recoveryThreshold, latencyMs, cause, sender
+  )
 
 proc handleStateAndNotify*(jobId: string, isOk: bool, notifyUrl: string,
                            dbPath: string = "", retries: int = 1,
