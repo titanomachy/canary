@@ -38,3 +38,8 @@ jobs:
 
       - name: Run all checks and local examples
         run: nimble checkAll -y
+
+      - name: Smoke-test a global package install
+        run: |
+          nimble install -y
+          canary --version

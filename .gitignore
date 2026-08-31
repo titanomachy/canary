@@ -24,6 +24,7 @@ nimcache/
 *.tmp
 *.swp
 *~
+
 nimble.develop
 nimble.paths
 nimbledeps
