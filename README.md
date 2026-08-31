@@ -52,12 +52,55 @@ CLI. See [Installation](#installation) for distro packages.
 | `icmp` | Host reachability | bounded packet count and process timeout |
 | `command` | Local executable | exit code and optional combined-output substring |
 
+Two quick examples for each command:
+
+**HTTP/HTTPS**
+
 ```bash
-canary http https://api.example.test/health \
-  --statusRange 2xx --jsonField service.status=ready --maxLatency 500
-canary tcp db.internal --port 5432 --timeout 1000
+canary http https://example.com
+canary http https://api.example.test/health --statusRange 2xx --search healthy
+```
+
+**TLS certificate**
+
+```bash
+canary ssl example.com
+canary ssl example.com --port 443 --minDays 30
+```
+
+**TCP**
+
+```bash
+canary tcp example.com --port 443
+canary tcp mail.example.test --port 25 --expected '220 '
+```
+
+**UDP**
+
+```bash
+canary udp 127.0.0.1 --port 9000
 canary udp 127.0.0.1 --port 9000 --payload ping --expected pong
-canary command /usr/bin/systemctl --arg is-active --arg postgresql
+```
+
+**DNS**
+
+```bash
+canary dns example.com --type A
+canary dns example.com --type MX --resolver 1.1.1.1
+```
+
+**ICMP**
+
+```bash
+canary icmp example.com
+canary icmp 192.0.2.10 --count 3 --timeout 3000
+```
+
+**Local command**
+
+```bash
+canary command /usr/bin/true
+canary command /usr/bin/printf --arg ready --outputMatch ready
 ```
 
 Every network check supports IPv6. Use bracket notation in URLs and in DNS
@@ -126,21 +169,23 @@ officially supported in the 0.1.x series.
 
 ## Documentation
 
-- [Checks](docs/checks.md): all check types, assertions, timing, and IPv6.
-- [Configuration](docs/configuration.md): TOML, environment variables,
-  precedence, identities, and secrets.
-- [Notifications](docs/notifications.md): providers, payloads, testing, and
-  durable delivery.
-- [State machine](docs/state-machine.md): thresholds, outbox transactions,
-  cooldowns, reminders, and silences.
-- [Architecture](docs/architecture.md): module and process boundaries.
-- [Security](docs/security.md): validation, redaction, and helper processes.
-- [Development](docs/development.md) and [testing](docs/testing.md): local
-  workflow, fixtures, and quality checks.
-- [Examples](examples/README.md): a tested local demo plus Metronome-Web, cron,
-  and systemd timer recipes.
-- [Changelog](CHANGELOG.md), [contributing guide](CONTRIBUTING.md), and
-  [baseline contract](docs/baseline-contract.md).
+> [!NOTE]
+>
+> - [Checks](docs/checks.md): all check types, assertions, timing, and IPv6.
+> - [Configuration](docs/configuration.md): TOML, environment variables,
+>   precedence, identities, and secrets.
+> - [Notifications](docs/notifications.md): providers, payloads, testing, and
+>   durable delivery.
+> - [State machine](docs/state-machine.md): thresholds, outbox transactions,
+>   cooldowns, reminders, and silences.
+> - [Architecture](docs/architecture.md): module and process boundaries.
+> - [Security](docs/security.md): validation, redaction, and helper processes.
+> - [Development](docs/development.md) and [testing](docs/testing.md): local
+>   workflow, fixtures, and quality checks.
+> - [Examples](examples/README.md): a tested local demo plus Metronome-Web,
+>   cron, and systemd timer recipes.
+> - [Changelog](CHANGELOG.md), [contributing guide](CONTRIBUTING.md), and
+>   [baseline contract](docs/baseline-contract.md).
 
 ## Limitations and security
 
