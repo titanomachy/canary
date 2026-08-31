@@ -169,23 +169,17 @@ officially supported in the 0.1.x series.
 
 ## Documentation
 
-> [!NOTE]
->
-> - [Checks](docs/checks.md): all check types, assertions, timing, and IPv6.
-> - [Configuration](docs/configuration.md): TOML, environment variables,
->   precedence, identities, and secrets.
-> - [Notifications](docs/notifications.md): providers, payloads, testing, and
->   durable delivery.
-> - [State machine](docs/state-machine.md): thresholds, outbox transactions,
->   cooldowns, reminders, and silences.
-> - [Architecture](docs/architecture.md): module and process boundaries.
-> - [Security](docs/security.md): validation, redaction, and helper processes.
-> - [Development](docs/development.md) and [testing](docs/testing.md): local
->   workflow, fixtures, and quality checks.
-> - [Examples](examples/README.md): a tested local demo plus Metronome-Web,
->   cron, and systemd timer recipes.
-> - [Changelog](CHANGELOG.md), [contributing guide](CONTRIBUTING.md), and
->   [baseline contract](docs/baseline-contract.md).
+<pre>
+<a href="docs/checks.md">Checks</a> — check types, assertions, timing, and IPv6
+<a href="docs/configuration.md">Configuration</a> — TOML, environment variables, precedence, and secrets
+<a href="docs/notifications.md">Notifications</a> — providers, payloads, testing, and durable delivery
+<a href="docs/state-machine.md">State machine</a> — thresholds, cooldowns, reminders, and silences
+<a href="docs/architecture.md">Architecture</a> — module and process boundaries
+<a href="docs/security.md">Security</a> — validation, redaction, and helper processes
+<a href="docs/development.md">Development</a> and <a href="docs/testing.md">testing</a> — local workflow, fixtures, and quality checks
+<a href="examples/README.md">Examples</a> — local demo plus Metronome-Web, cron, and systemd recipes
+<a href="CHANGELOG.md">Changelog</a> · <a href="CONTRIBUTING.md">Contributing</a> · <a href="docs/baseline-contract.md">Baseline contract</a>
+</pre>
 
 ## Limitations and security
 
