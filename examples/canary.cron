@@ -1,0 +1,8 @@
+# /etc/cron.d/canary -- paths are explicit because cron has a small environment.
+# Load secrets inside the wrapper/environment mechanism used by your platform;
+# never place a real notification URL in this file.
+CANARY_DB=/var/lib/canary/state.db
+
+* * * * * canary /usr/local/bin/canary http https://api.example.test/health --id production-api --statusRange 2xx --retries 2
+0 8 * * * canary /usr/local/bin/canary ssl api.example.test --id production-api-tls --minDays 21
+*/2 * * * * canary /usr/local/bin/canary tcp db.internal --port 5432 --id production-db --timeout 1000 --retries 2

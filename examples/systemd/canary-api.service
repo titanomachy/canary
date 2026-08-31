@@ -1,0 +1,17 @@
+[Unit]
+Description=Canary production API health check
+Documentation=https://github.com/titanomachy/canary
+
+[Service]
+Type=oneshot
+User=canary
+Group=canary
+Environment=CANARY_DB=/var/lib/canary/state.db
+EnvironmentFile=-/etc/canary/api.env
+ExecStart=/usr/local/bin/canary http https://api.example.test/health --id production-api --statusRange 2xx --jsonField service.status=ready --retries 2 --recoveryThreshold 2 --timeout 3000
+NoNewPrivileges=yes
+PrivateTmp=yes
+ProtectHome=yes
+ProtectSystem=strict
+ReadWritePaths=/var/lib/canary
+

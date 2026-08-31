@@ -10,6 +10,7 @@ on public websites, DNS records, or notification services.
 | `nimble test` | Unit, integration, and CLI suites. |
 | `nimble testCli` | Public stdout, stderr, JSON, and exit-code contract. |
 | `nimble testIntegration` | Local HTTP, TCP, UDP, DNS, TLS, webhook, and SQLite scenarios. |
+| `nimble testDocs` | Local Markdown links, README scope, example inventory, and executable loopback demo. |
 | `nimble checkAll` | Style/static checks, debug and release builds, then every suite. |
 
 ## Unit coverage
@@ -42,10 +43,10 @@ exercises these paths:
 
 ```text
 no row + success ────────────────> UP
-no row + failure below threshold > UNKNOWN
-UNKNOWN + failure at threshold ──> DOWN + alert
-UP + failure below threshold ────> UP (pending failure)
-pending failure + success ───────> UP (counter reset)
+no row + failure below threshold > PENDING_DOWN
+PENDING_DOWN + threshold failure > DOWN + alert
+UP + failure below threshold ────> PENDING_DOWN
+PENDING_DOWN + success ──────────> UP (counter reset)
 DOWN + failure ──────────────────> DOWN (no duplicate alert)
 DOWN + success ──────────────────> UP + recovery
 DOWN + repeat interval elapsed ──> DOWN + reminder
@@ -85,3 +86,17 @@ also forces a webhook connection failure with userinfo, a secret path, and a
 query token, then verifies that stderr contains only the public notification
 host. Local command cases cover successful literal output matching, expected
 nonzero exits, assertion failures, timeouts, and missing executables.
+
+## Documentation and example coverage
+
+`tests/docs/test_docs.nim` resolves every local Markdown link in the README,
+changelog, contribution guide, `docs/`, and `examples/`, plus the local roadmap
+when it is present in a development worktree. It also keeps the README below its
+agreed entry-page size and checks that every required manual and scheduler
+example remains discoverable.
+
+`examples/run-local-demo.sh` is the executable smoke test. It starts one-shot
+HTTP, TCP, UDP, and generic webhook fixtures on kernel-assigned loopback ports,
+runs the documented Canary assertions, waits for clean fixture exits, and
+removes its private temporary directory. Like the other integration tests, it
+never contacts a public service.

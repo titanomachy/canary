@@ -18,6 +18,12 @@ Run the local integration suite with:
 nimble testIntegration
 ```
 
+Check local documentation links and run the HTTP/TCP/UDP/webhook example with:
+
+```bash
+nimble testDocs
+```
+
 Run static checks, debug and release builds, and every test suite with:
 
 ```bash
@@ -42,8 +48,12 @@ The test layers are:
   `docs/cli-contract.md`, including config paths, precedence, typed errors, and
   explicit state identity, silence behavior, and shellless local command
   execution, using local IPv4 and IPv6 TCP sockets.
+- `docs/test_docs.nim`: local Markdown-link resolution, README scope, required
+  manual/example inventory, and safe example-configuration assertions.
 - `fixtures/`: small Nim executables used by integration tests. They accept one
   request or datagram and exit, which keeps tests deterministic.
 
-No suite contacts a public website or external notification provider. See
+The documentation task also executes `examples/run-local-demo.sh` against the
+one-shot local fixtures. No suite contacts a public website or external
+notification provider. See
 [`docs/testing.md`](../docs/testing.md) for the scenarios and fixture contract.

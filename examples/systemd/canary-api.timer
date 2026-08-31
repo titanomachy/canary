@@ -1,0 +1,12 @@
+[Unit]
+Description=Run the Canary production API check every minute
+
+[Timer]
+OnBootSec=30s
+OnUnitActiveSec=1min
+AccuracySec=5s
+Unit=canary-api.service
+
+[Install]
+WantedBy=timers.target
+

@@ -1,648 +1,179 @@
-# canary
+# Canary
 
-A lightweight, stateless-by-default service health and uptime monitoring CLI in Nim. Designed to integrate seamlessly with schedulers like [Metronome](https://github.com/titanomachy/Metronome)/[Metronome-Web](https://github.com/titanomachy/Metronome-Web) as a self-hosted replacement for services like Uptime Robot.
+Canary is a lightweight Linux health-check CLI written in Nim. A scheduler
+starts one process, Canary performs one HTTP, TLS, TCP, UDP, DNS, ICMP, or local
+command check, prints a result, and exits. It is stateless by default; SQLite
+state, failure/recovery thresholds, and durable notifications are opt-in.
 
----
+Canary is designed to pair with schedulers such as
+[Metronome](https://github.com/titanomachy/Metronome),
+[Metronome-Web](https://github.com/titanomachy/Metronome-Web), cron, and systemd
+timers instead of running its own daemon or scheduler.
 
-## Philosophy & Architecture
+## Five-minute quickstart
 
-Many monitoring solutions are heavy background daemons bundling their own schedulers, web servers, and persistent services. **Canary** adheres to the Unix philosophy: *do one thing and do it well*.
+Canary 0.1.x supports Linux and requires Nim 2.0 or newer, a C compiler,
+SQLite development libraries, OpenSSL command-line tools, and `ping`. The
+optional HTTP timing mode also requires the libcurl shared library.
 
-1. **Stateless & Fast:** Without `--db`, `CANARY_DB`, `--notify`, or an explicit `--silenceUntil` state change, Canary executes one targeted health check without writing state and exits immediately.
-2. **Orchestrated by Metronome/Metronome-Web:** [Metronome](https://github.com/titanomachy/Metronome)/[Metronome-Web](https://github.com/titanomachy/Metronome-Web) manages the cron/interval schedule, asynchronous job execution, run history, and Apache ECharts response-time visualisations.
-3. **Smart State Tracking & Alerting:** Powered by [nim-sqlite](https://github.com/titanomachy/nim-sqlite), Canary records endpoint status and failure counts in an embedded SQLite database (`~/.config/canary/state.db`). Notifications (Pushover, Slack, Discord, Webhooks) are dispatched on state transitions, with optional cooldowns, DOWN reminders, and maintenance silences.
-
-```text
-┌────────────────────────────────────────────────────────────────────────┐
-│                        Metronome/Metronome-Web                         │
-│ (Cron/Interval Scheduler, Multi-process Execution, Dashboard, Charts)  │
-└───────────────────────────────────┬────────────────────────────────────┘
-                                    │
-                        triggers periodic process
-                                    │
-                                    ▼
-                        ┌───────────────────────┐
-                        │        canary         │
-                        │ HTTP/SSL/TCP/UDP/DNS  │
-                        │ ICMP/local commands  │
-                        └───────────┬───────────┘
-                                    │
-             ┌──────────────────────┴──────────────────────┐
-             ▼                                             ▼
-    ┌─────────────────────────┐                   ┌─────────────────┐
-    │     SQLite State DB     │                   │  Notifications  │
-    │  (~/.config/canary/..)  │──────────────────►│ (Pushover/Slack)│
-    │ (WAL Mode, Retries & Δ) │ (on state change) │  (UP <-> DOWN)  │
-    └─────────────────────────┘                   └─────────────────┘
-```
-
----
-
-## Installation & Building
-
-The supported platform, exit codes, state behavior, and notification-failure
-semantics are defined in the [baseline contract](docs/baseline-contract.md).
-
-### Requirements
-- Nim >= 2.0.0 (tested on Nim 2.2+)
-- Linux (the only supported platform in the `0.1.x` series)
-- SQLite development libraries (`libsqlite3-dev` / `sqlite-devel`)
-- OpenSSL command-line tools for TLS certificate checks
-- The libcurl shared library for optional HTTP `--verbose`/`--timing` phase
-  measurements (the curl executable is not used)
-- `ping` (usually provided by `iputils-ping`) for ICMP checks
-- C compiler (GCC or Clang)
-
-### Building from source
 ```bash
 git clone https://github.com/titanomachy/canary.git
 cd canary
-
-# Install dependencies (nim-confutils, TOML serialization, and nim-sqlite)
 nimble install -d
-
-# Compile the binary
 nimble build -y
+
+# Stateless checks: no database is created.
+./build/canary http https://example.com --statusRange 2xx
+./build/canary tcp example.com --port 443
+./build/canary dns example.com --type A
+
+# Machine-readable output and a stable state identity.
+./build/canary http https://example.com --json \
+  --id example-home --db ./build/canary-state.db --retries 2
 ```
 
-The compiled binary is produced as `./build/canary`.
+A completed healthy check exits `0`, an unhealthy check exits `1`, invalid
+configuration exits `2`, and an unexpected internal error exits `3`. State or
+notification failures are reported on stderr without changing the completed
+check result.
 
----
+Run `./build/canary --help` or `./build/canary <command> --help` for the exact
+CLI. See [Installation](#installation) for distro packages.
 
-## Commands, Options & Examples
+## Checks
 
-Canary uses a thin `nim-confutils` adapter for typed CLI, environment, and TOML
-configuration. Parsing remains isolated from the application layer; see
-[Configuration](docs/configuration.md) and [Architecture](docs/architecture.md).
-
-Defaults are resolved as `built-in < TOML < CANARY_* environment < CLI`.
-Pass `--config PATH` explicitly or place defaults in
-`$XDG_CONFIG_HOME/canary/config.toml` (falling back to
-`~/.config/canary/config.toml`). A missing default file is ignored; a missing
-explicit file is an error. Targets remain required positional arguments.
-
-Every command accepts `--id NAME` to give state an explicit identity. Use it
-when checks share a target but have different assertions, so their retry and
-notification histories remain independent.
-
-### Elapsed-time measurements
-
-Every check measures elapsed time with Nim's monotonic `getMonoTime()` clock,
-so corrections to the system wall clock cannot make a measurement jump forward
-or backward. The timer starts when the check function starts and ends when its
-result has been received and classified:
-
-- HTTP includes client setup, redirects, receiving the complete response body,
-  and processing the configured status, header, text, regex, and JSON
-  assertions. **The response time is the total elapsed time from starting the
-  HTTP check through receiving and processing the complete response.** A
-  request failure or timeout is measured until that failure is classified.
-  With `--verbose` (alias `--timing`), the same HTTP operation also reports
-  libcurl transport phases. These do not replace the complete response time.
-- SSL includes both OpenSSL invocations, certificate extraction, expiration
-  parsing, and validity classification. The certificate's absolute expiration
-  date is intentionally compared with the wall clock; only elapsed duration
-  uses the monotonic clock.
-- TCP includes address resolution, connection, and any configured send and
-  response match. UDP includes address resolution, sending, receiving, and the
-  optional response match. DNS includes the hosts-file or resolver query,
-  possible UDP-to-TCP fallback, and answer processing. ICMP includes the
-  complete `ping` helper-process run and exit classification.
-- Command checks include starting the local executable, waiting for it to exit,
-  and classifying its exit code and optional combined stdout/stderr match.
-
-On some systems a monotonic clock does not count time spent in system suspend.
-For normal uptime checks while the system is active, `getMonoTime()` is still
-the correct clock because it is unaffected by wall-clock adjustments.
-
----
-
-### 1. HTTP / HTTPS Checks (`canary http`)
-Monitor web applications, REST APIs, and websites with optional keyword matching, custom headers, and HTTP verbs.
+| Command | Purpose | Typical assertions |
+| --- | --- | --- |
+| `http` | HTTP/HTTPS response | status/range, response time, header, text, regex, JSON field |
+| `ssl` | TLS certificate expiry | minimum remaining days |
+| `tcp` | TCP service | connect, optional request and response/banner substring |
+| `udp` | UDP service | response required, optional substring |
+| `dns` | DNS records | A, AAAA, CNAME, MX, or TXT values; optional resolver |
+| `icmp` | Host reachability | bounded packet count and process timeout |
+| `command` | Local executable | exit code and optional combined-output substring |
 
 ```bash
-# Basic check (expects HTTP 200)
-./canary http https://example.com
-
-# Assert required keyword in response body
-./canary http https://example.com --search "Example Domain"
-
-# Custom headers & Bearer authentication token
-./canary http https://api.example.com/v1/health \
-  --headers "Authorization: Bearer MY_SECRET_TOKEN,User-Agent: Canary/1.0"
-
-# POST request with JSON body payload
-./canary http https://api.example.com/v1/ping \
-  --methodStr POST --body '{"ping": true}' --status 201
-
-# Accept a status class and assert total response time, a header, and JSON content
-./canary http https://api.example.com/v1/health \
-  --statusRange '2xx' --maxLatency 500 \
-  --responseHeader 'Content-Type: application/json' \
-  --jsonField 'service.status=ready'
-
-# Structured JSON output & Retries (alert only after 2 consecutive failures)
-./canary http https://myapp.com --retries 2 --json --notify "https://hooks.slack.com/services/..."
-
-# Curl-style phase timings in human output and structured JSON
-./canary http https://example.com --verbose
-./canary http https://example.com --timing --json
+canary http https://api.example.test/health \
+  --statusRange 2xx --jsonField service.status=ready --maxLatency 500
+canary tcp db.internal --port 5432 --timeout 1000
+canary udp 127.0.0.1 --port 9000 --payload ping --expected pong
+canary command /usr/bin/systemctl --arg is-active --arg postgresql
 ```
 
-**Options:**
-| Option | Type | Default | Description |
-| :--- | :--- | :--- | :--- |
-| `url` | `string` | *required* | Target URL to test (*positional argument*) |
-| `-t=, --timeout=` | `int` | `5000` | Timeout in milliseconds |
-| `-s=, --status=` | `int` | `200` | Expected HTTP status code |
-| `--statusRange=` | `string` | `""` | Accepted codes, ranges, or classes, such as `200,204,3xx` (overrides `--status`) |
-| `--maxLatency=` | `int` | `0` | Maximum total HTTP response time in milliseconds; `0` disables the assertion (option name retained for compatibility) |
-| `--search=` | `string` | `""` | Substring that must be present in response body |
-| `--regex=` | `string` | `""` | Regular expression that must match the response body |
-| `--headers=` | `string` | `""` | Request headers separated by commas or newlines |
-| `--responseHeader=` | `string` | `""` | Required response header as `Name` or `Name: value-substring` |
-| `--jsonField=` | `string` | `""` | Required JSON scalar as `dotted.path=value`; numeric components index arrays |
-| `-m=, --methodStr=` | `string` | `"GET"` | HTTP method (`GET`, `POST`, `HEAD`, `PUT`, `DELETE`, `PATCH`, `OPTIONS`) |
-| `-b=, --body=` | `string` | `""` | Payload body for POST/PUT requests |
-| `--maxRedirects=` | `int` | `5` | Maximum number of redirects to follow |
-| `-v, --verbose` (`--timing`) | `bool` | `false` | Report DNS, TCP-connect, TLS-handshake, TTFB, transfer, and total transport timings |
-| `-r=, --retries=` | `int` | `1` | Consecutive failure count required before DOWN alert |
-| `--recoveryThreshold=` | `int` | `1` | Consecutive successes required before recovery alert |
-| `--cooldown=` | `int` | `0` | Minimum seconds between DOWN-class notifications; `0` disables |
-| `--repeatInterval=` | `int` | `0` | Repeat a DOWN alert after this many seconds; `0` disables |
-| `--silenceUntil=` | `string` | `""` | Persistently suppress notifications until a UTC timestamp; `clear` removes it |
-| `--id=` | `string` | `""` | Stable explicit state identity (recommended when a target has multiple assertions) |
-| `-n=, --notify=` | repeatable string | none | Notification URL; repeat for multiple endpoints |
-| `-d=, --db=` | `string` | `""` | Path to SQLite database (optional, see State Tracking) |
-| `-j, --json` | `bool` | `false` | Output result as structured JSON object |
+Every network check supports IPv6. Use bracket notation in URLs and in DNS
+resolver values that include a port. The complete option and assertion
+reference is in [docs/checks.md](docs/checks.md).
 
-#### Terminal Output Examples:
-```text
-$ ./canary http https://example.com --search "Example Domain"
-HTTP OK - https://example.com - Status: 200 OK - Response time: 42ms
+## State and notifications
 
-$ ./canary http https://example.com/not-found
-HTTP ERROR - https://example.com/not-found - Status: 404 Not Found (Expected: 200) - Response time: 18ms
-[exit code: 1]
-
-$ ./canary http https://example.com --methodStr HEAD --json
-{"check":"http","target":"https://example.com","status":"UP","latency_ms":35,"message":"HTTP OK - https://example.com - Status: 200 OK - Response time: 35ms","details":"Status: 200 OK","response_time_ms":35}
-
-$ ./canary http https://example.com --verbose
-HTTP OK - https://example.com - Status: 200 OK - Response time: 38ms - Timings: DNS 2.104ms, TCP 7.315ms, TLS 13.842ms, TTFB 12.006ms, Transfer 0.184ms, Total 35.451ms
-
-$ ./canary http https://example.com --timing --json
-{"check":"http","target":"https://example.com","status":"UP","latency_ms":38,"message":"HTTP OK - https://example.com - Status: 200 OK - Response time: 38ms - Timings: DNS 2.104ms, TCP 7.315ms, TLS 13.842ms, TTFB 12.006ms, Transfer 0.184ms, Total 35.451ms","details":"Status: 200 OK","response_time_ms":38,"timings_ms":{"dns":2.104,"tcp_connect":7.315,"tls_handshake":13.842,"ttfb":12.006,"transfer":0.184,"total":35.451}}
-```
-
-Human-readable HTTP output calls this measurement `Response time`. HTTP JSON
-adds the precise `response_time_ms` field; the equal-valued `latency_ms` field
-remains available for compatibility with existing consumers.
-
-Timing mode performs the request in process through libcurl; it does not start
-the `curl` executable and does not expose the URL, request body, or headers in a
-child-process argument list. The phase values are floating-point milliseconds,
-rounded to three decimal places:
-
-- `dns`: start through name resolution;
-- `tcp_connect`: end of DNS through an established TCP connection;
-- `tls_handshake`: end of TCP connect through TLS completion (`0` for HTTP);
-- `ttfb`: end of TCP/TLS setup through the first response byte;
-- `transfer`: first response byte through completion of the response body;
-- `total`: the summed libcurl transport time, including redirects.
-
-`response_time_ms` remains the integer monotonic duration of the whole Canary
-HTTP check, including transport setup and local response assertions. Therefore
-it can be slightly higher than `timings_ms.total`; `--maxLatency` continues to
-apply to `response_time_ms`. A phase is `0` when it does not apply or was not
-completed before a transport failure. Timing fields are omitted unless the
-mode was requested.
-
----
-
-### 2. SSL / TLS Certificate Expiry (`canary ssl`)
-Monitor certificate validity and days remaining before expiration.
+Without `--db`, `CANARY_DB`, `--notify`, or an explicit `--silenceUntil`
+change, Canary never creates or updates state. When enabled, SQLite tracks
+`UNKNOWN`, `UP`, `PENDING_DOWN`, and `DOWN`, while a durable outbox provides
+at-least-once notification delivery.
 
 ```bash
-# Alert if certificate expires within 14 days (default)
-./canary ssl example.com
+export CANARY_DB=/var/lib/canary/state.db
+export CANARY_NOTIFY='https://hooks.example.test/private-token'
 
-# Alert if certificate expires within 30 days on a custom port
-./canary ssl secure.example.com --minDays 30 --port 8443
-
-# Dispatch notification and log as JSON
-./canary ssl example.com --minDays 14 --json --notify "pushover://USER@TOKEN"
-```
-
-**Options:**
-| Option | Type | Default | Description |
-| :--- | :--- | :--- | :--- |
-| `host` | `string` | *required* | Hostname or URL (*positional argument*) |
-| `-m=, --minDays=` | `int` | `14` | Minimum days remaining threshold before alerting |
-| `-p=, --port=` | `int` | `443` | SSL/TLS port |
-| `-t=, --timeout=` | `int` | `5000` | Timeout in milliseconds |
-| `-r=, --retries=` | `int` | `1` | Consecutive failure count required before DOWN alert |
-| `--recoveryThreshold=` | `int` | `1` | Consecutive successes required before recovery alert |
-| `--cooldown=` | `int` | `0` | Minimum seconds between DOWN-class notifications; `0` disables |
-| `--repeatInterval=` | `int` | `0` | Repeat a DOWN alert after this many seconds; `0` disables |
-| `--silenceUntil=` | `string` | `""` | Persistently suppress notifications until a UTC timestamp; `clear` removes it |
-| `--id=` | `string` | `""` | Stable explicit state identity |
-| `-n=, --notify=` | repeatable string | none | Notification URL; repeat for multiple endpoints |
-| `-j, --json` | `bool` | `false` | Output result as JSON object |
-
-#### Terminal Output Examples:
-```text
-$ ./canary ssl example.com
-SSL OK - example.com certificate valid (59 days left) - Latency: 48ms
-
-$ ./canary ssl example.com --json
-{"check":"ssl","target":"example.com","status":"UP","latency_ms":43,"message":"SSL OK - example.com certificate valid (59 days left) - Latency: 43ms","details":"Expiration: Oct 27 22:17:21 2026 GMT (Days left: 59)"}
-```
-
----
-
-### 3. TCP Port Checks (`canary tcp`)
-Verify network services (databases, SSH, mail servers) are listening and accepting connections.
-
-```bash
-# Check PostgreSQL on port 5432
-./canary tcp 127.0.0.1 -p 5432
-
-# Check SSH on remote host with custom timeout and retries
-./canary tcp 192.168.1.10 -p 22 --timeout 2000 --retries 2
-
-# Match a server-first SSH banner
-./canary tcp 192.168.1.10 -p 22 --expected "SSH-2.0-"
-
-# Send a protocol request and require a response substring
-./canary tcp 127.0.0.1 -p 9000 --request "PING" --expected "PONG"
-```
-
-`--expected` waits for a matching response substring. It can be used without
-`--request` for server-first protocols such as SSH or SMTP banners. When
-`--request` is set, its bytes are sent verbatim before Canary reads the
-response. The single `--timeout` covers connection, transmission, and response
-matching. Omitting both options preserves the connect-only port check.
-
-#### Terminal Output Examples:
-```text
-$ ./canary tcp example.com -p 443
-TCP OK - example.com:443 - Latency: 10ms
-
-$ ./canary tcp 127.0.0.1 -p 9000 --request PING --expected PONG
-TCP OK - 127.0.0.1:9000 - Latency: 1ms
-
-$ ./canary tcp example.com -p 444 --timeout 1000
-TCP TIMEOUT - example.com:444 - After 1001ms
-[exit code: 1]
-```
-
----
-
-### 4. ICMP Ping Checks (`canary icmp`)
-Verify host reachability via ICMP echo packets.
-
-```bash
-# Standard ping (1 packet)
-./canary icmp 1.1.1.1
-
-# Send multiple packets
-./canary icmp router.local --count 3
-```
-
-`--count` accepts 1 through 100 packets. `--timeout` bounds the complete
-`ping` process and defaults to 5000 milliseconds.
-
-#### Terminal Output Examples:
-```text
-$ ./canary icmp 127.0.0.1
-ICMP OK - 127.0.0.1 - Latency: 4ms
-```
-
----
-
-### 5. DNS Resolution Checks (`canary dns`)
-Query `A`, `AAAA`, `CNAME`, `MX`, or `TXT` records with a bounded timeout.
-Canary uses the first nameserver in `/etc/resolv.conf` by default. Select a
-specific resolver with `--resolver IP` (an optional `:PORT` is supported for
-local/testing resolvers).
-
-```bash
-# Basic DNS resolution
-./canary dns example.com
-
-# Require both addresses; additional answers remain acceptable
-./canary dns example.com --type A \
-  --expected "192.0.2.10" --expected "192.0.2.11"
-
-# Query MX through a selected resolver
-./canary dns example.com --type MX \
-  --expected "10 mail.example.com" --resolver "1.1.1.1" --timeout 2000
-
-# TXT values are compared exactly and case-sensitively
-./canary dns example.com --type TXT --expected "canary=ready"
-```
-
-#### Terminal Output Examples:
-```text
-$ ./canary dns example.com
-DNS OK - example.com A records: 192.0.2.10, 192.0.2.11 - Latency: 7ms
-```
-
-`--expected` is repeatable. Every configured value must be present, while
-unconfigured extra answers are allowed. Names in `CNAME`/`MX` answers are
-matched case-insensitively without a trailing dot; `AAAA` values are
-canonicalized before comparison. Truncated UDP replies are retried over TCP
-within the same total timeout.
-
----
-
-### 6. UDP Checks (`canary udp`)
-Check UDP service reachability (e.g. DNS or NTP). Canary reports `UP` only after
-receiving a response before the timeout. Use `--expected` to require a substring
-in that response.
-
-```bash
-./canary udp 127.0.0.1 -p 9000 --payload "ping" --expected "pong"
-```
-
----
-
-### 7. Local Command Checks (`canary command`)
-
-Run a local executable directly and assert its exit code and, optionally, a
-literal substring in its combined stdout and stderr. No shell is started:
-every `--arg` value is passed as one unchanged argument and the option is
-repeatable.
-
-```bash
-# Exit code 0 is expected by default
-./canary command /usr/local/bin/check-disk --timeout 2000
-
-# Pass two arguments and require both a nonzero exit code and output text
-./canary command /usr/bin/systemctl \
-  --arg is-active --arg my-service \
-  --exitCode 3 --outputMatch inactive --timeout 3000
-```
-
-| Option | Type | Default | Description |
-| :--- | :--- | :--- | :--- |
-| `executable` | `string` | *required* | Executable name or path (*positional argument*) |
-| `--arg=` | repeatable string | none | One literal argument; repeat to preserve argv boundaries |
-| `-t=, --timeout=` | `int` | `5000` | Maximum total runtime in milliseconds |
-| `--exitCode=` | `int` | `0` | Expected process exit code from `0` through `255` |
-| `--outputMatch=` | `string` | `""` | Required literal substring in combined stdout/stderr; empty disables |
-
-A timeout is always `DOWN`, even if its termination status equals the expected
-exit code. A missing or unstartable executable is a configuration error. Raw
-command output, arguments, and the configured match are not copied into result,
-state, or notification messages. Use `--id` when checks of the same executable
-with different arguments or assertions need independent state.
-
----
-
-## IPv6
-
-Every network check supports IPv6 literals. HTTP and HTTPS URLs use standard
-bracket notation. Host arguments for TCP, UDP, TLS, DNS, and ICMP accept either
-the bare literal or brackets; output that combines an address and port always
-uses `[address]:port` so it remains unambiguous.
-
-```bash
-# HTTP over IPv6
-./canary http 'http://[2001:db8::10]:8080/health'
-
-# TCP and UDP host arguments
-./canary tcp 2001:db8::20 --port 443
-./canary udp '[2001:db8::53]' --port 9000 --payload ping
-
-# Query through an IPv6 DNS resolver on a custom port
-./canary dns example.com --type AAAA \
-  --resolver '[2001:db8::53]:5353' --expected '2001:db8::10'
-
-# TLS and ICMP literals
-./canary ssl 'https://[2001:db8::30]/'
-./canary icmp 2001:db8::40
-```
-
-TCP tries the IPv4 and IPv6 addresses returned by the system resolver within
-one check deadline. UDP sends the probe through every resolved address family
-and accepts the first response. An IPv6 ICMP literal selects `ping -6`
-explicitly; hostname targets retain the resolver behavior of the installed
-Linux `ping` implementation.
-
----
-
-## SQLite State Tracking & Flapping Protection
-
-State tracking is opt-in through `--db`, `CANARY_DB`, `--notify`, or an explicit
-`--silenceUntil` state change. Without one of these inputs Canary does not
-create or update a database. When enabled,
-Canary uses the [nim-sqlite](https://github.com/titanomachy/nim-sqlite) library
-for embedded state persistence.
-
-Without `--id`, state IDs use a public form of URL targets: userinfo, query
-parameters, and fragments are removed before persistence. Checks that differ
-only in query values or expectations therefore share generated state. Local
-command IDs similarly omit arguments and assertions because these can contain
-credentials. Give each such check a stable `--id` to keep its state independent:
-
-```bash
-./canary http https://api.example.test/health --status 200 --id api-status
-./canary http https://api.example.test/health --search ready --id api-readiness
-```
-
-### 1. Database Location Resolution
-Canary locates the SQLite database in the following order:
-1. Explicit CLI flag: `--db /path/to/state.db`
-2. Environment variable: `CANARY_DB`
-3. TOML setting: `db = "/path/to/state.db"`
-4. Default fallback: `~/.config/canary/state.db` (created when state is requested)
-
-### 2. Concurrency & WAL Mode
-To ensure concurrent checks executed simultaneously by Metronome-Web never lock or block each other, Canary initializes SQLite with:
-- `PRAGMA journal_mode = WAL;` (Write-Ahead Logging)
-- `PRAGMA busy_timeout = 5000;` (Wait up to 5 seconds on concurrent writes)
-
-### 3. Database Schema & Inspection
-The `canary_state` table records the state, consecutive failure count, and last check timestamp for each target:
-
-```sql
-CREATE TABLE IF NOT EXISTS canary_state (
-  id TEXT PRIMARY KEY,          -- e.g. 'http_https://example.com', 'ssl_example.com_443'
-  status TEXT NOT NULL,         -- 'UNKNOWN', 'UP', 'PENDING_DOWN', or 'DOWN'
-  fail_count INTEGER NOT NULL,  -- Consecutive failures (for flapping protection)
-  success_count INTEGER NOT NULL, -- Consecutive successes while DOWN
-  last_check INTEGER NOT NULL,  -- Unix timestamp of last check
-  last_notification INTEGER NOT NULL, -- Last queued alert/recovery/reminder
-  incident_alerted INTEGER NOT NULL,  -- Current DOWN incident was announced
-  silenced_until INTEGER NOT NULL     -- Persisted UTC silence end, Unix time
-);
-```
-
-#### Inspecting the state database:
-```bash
-$ sqlite3 ~/.config/canary/state.db "SELECT id, status, fail_count, datetime(last_check, 'unixepoch') FROM canary_state;"
-```
-```text
-╭──────────────────────────────┬────────┬────────────┬──────────────────────╮
-│              id              │ status │ fail_count │ datetime(last_check) │
-╞══════════════════════════════╪════════╪════════════╪══════════════════════╡
-│ ssl_example.com_443          │ UP     │          0 │ 2026-08-29 01:06:10  │
-│ http_https://example.com     │ UP     │          0 │ 2026-08-29 01:06:12  │
-│ tcp_127.0.0.1_5432           │ UP     │          0 │ 2026-08-29 01:08:44  │
-│ dns_myserver.local           │ DOWN   │          3 │ 2026-08-29 01:09:12  │
-╰──────────────────────────────┴────────┴────────────┴──────────────────────╯
-```
-
-### 4. Flapping Protection (`--retries`)
-By default, Canary triggers an alert on the first failure (`--retries 1`). For unstable networks or transient glitches, set `--retries 2` or `--retries 3`:
-- **Attempt 1 fails:** `fail_count` becomes 1 and the state becomes
-  `PENDING_DOWN`; **no alert is sent**.
-- **Attempt 2 fails:** `fail_count` reaches threshold, status changes to `DOWN`, **[ALERT] DOWN notification sent**.
-- **Subsequent run succeeds:** `fail_count` resets to 0. Once
-  `--recoveryThreshold` consecutive successes have occurred, status changes to
-  `UP` and a **[RECOVERY] notification is queued**.
-
-### 5. Cooldowns, reminders, and maintenance silence
-
-All three controls are per check ID and default to disabled:
-
-- `--cooldown SECONDS` prevents a newly flapping DOWN incident or reminder from
-  being queued until at least that many seconds have passed since the previous
-  notification. Recovery notifications are immediate. Because Canary is a
-  scheduled CLI, the catch-up alert is queued by the first run after cooldown.
-- `--repeatInterval SECONDS` queues `[REMINDER]` notifications on failed runs
-  while the state remains `DOWN`. A successful sample that is still below the
-  recovery threshold never emits a DOWN reminder. The effective reminder gap is
-  the larger of this interval and the cooldown. A transaction ensures
-  concurrent runs enqueue at most one due reminder.
-- `--silenceUntil 2026-08-30T18:00:00Z` persists an absolute UTC maintenance
-  end for the check. Health state and retry counters continue to update, while
-  transition creation and pending outbox delivery are suppressed. If the check
-  is still `DOWN` when maintenance ends, the first later run queues a catch-up
-  alert. A recovery during the silence cancels its still-pending alert. Use
-  `--silenceUntil clear` to end a persisted window early.
-
-For example:
-
-```bash
-# Remind every hour, but never emit DOWN-class messages less than 15 min apart.
 canary http https://api.example.test/health --id production-api \
-  --notify 'https://hooks.example.invalid/private' \
+  --retries 2 --recoveryThreshold 2 \
   --cooldown 900 --repeatInterval 3600
-
-# Start a maintenance silence; later scheduled runs may omit --silenceUntil.
-canary http https://api.example.test/health --id production-api \
-  --silenceUntil 2026-08-30T18:00:00Z --db /var/lib/canary/state.db
 ```
 
-The interval is evaluated only when Canary runs. Schedule the check more often
-than the desired reminder precision. Keep `--id`, database, and timing settings
-consistent across invocations so they share one state owner.
+Repeat `--notify URL` for multiple targets, or separate URLs with newlines in
+`CANARY_NOTIFY`. Slack, Discord, Pushover, and generic HTTP(S) webhooks are
+supported. Test a provider independently with `canary notify test <provider>`.
+See [notifications](docs/notifications.md) and the
+[state machine](docs/state-machine.md) for delivery, retry, cooldown, reminder,
+and maintenance-silence semantics.
 
----
+## Configuration
 
-## Notifications & Alerts
+Defaults resolve in this order:
 
-Canary supports multiple notification endpoints simultaneously. Repeat
-`--notify URL` for CLI use, use a TOML `notify` array, or place one URL (multiple
-URLs separated by newlines) in `CANARY_NOTIFY`.
+```text
+built-in defaults < TOML < CANARY_* environment < CLI options
+```
 
-Transition and reminder notifications use a durable SQLite outbox. State and
-outbox rows are committed atomically, and temporary failures are retried on
-later runs with
-bounded exponential backoff. Delivery is at-least-once, so providers may rarely
-receive a duplicate around a process crash.
+Pass `--config PATH`, or use `$XDG_CONFIG_HOME/canary/config.toml` (falling
+back to `~/.config/canary/config.toml`). A missing default file is ignored; a
+missing explicit file is an error. Targets remain positional and are never
+loaded from configuration. Start with the credential-free
+[example configuration](examples/canary.toml) and read the
+[configuration guide](docs/configuration.md).
 
-Notification credentials and full webhook paths are never included in result
-output or delivery errors. Prefer `CANARY_NOTIFY` and `CANARY_HEADERS` over
-command-line secrets, and keep credentials out of checked-in TOML. See the
-[configuration guide](docs/configuration.md) for the complete source and
-security contract.
+## Installation
 
----
+Install these platform dependencies first. Package names vary by distribution:
 
-## Validation and security
+- Nim 2.0 or newer and Nimble;
+- GCC or Clang;
+- SQLite headers and shared library (`libsqlite3-dev` or `sqlite-devel`);
+- OpenSSL command-line tools;
+- `ping` (usually `iputils-ping`);
+- the libcurl shared library for `http --verbose`/`--timing` only.
 
-Canary validates timeouts, retry thresholds, ports, HTTP status codes and
-methods, hostnames, DNS expectations, redirects, header syntax, TLS thresholds,
-ICMP packet counts, and local-command exit/output limits before starting a
-check. Invalid input exits with code `2`; a valid check that reaches an
-unavailable service or fails an assertion exits with code `1`.
-
-ICMP, TLS, and local command checks receive an executable and an argument array
-directly. No target or command argument is evaluated by a shell, and the
-temporary OpenSSL-based TLS implementation uses two sequential invocations
-rather than a pipeline. See the [security contract](docs/security.md) for the
-complete boundary.
-
-### Supported Notification Protocols:
-
-1. **Slack, Discord & Generic Webhooks (`http://` or `https://`):**
-   Generic webhooks receive both `text` and `content`; Slack receives `text`
-   and Discord receives `content`. Any HTTP 2xx response counts as success.
-   ```bash
-   --notify "https://hooks.slack.com/services/XXX/YYY/ZZZ"
-   ```
-
-2. **Pushover (`pushover://`):**
-   Format: `pushover://USER_KEY@API_TOKEN`
-   ```bash
-   --notify "pushover://uQiRzpo4DXghDmr9QnoxfConfiguration@azGDORePK8gMaC0QOYAMyRIuzDM5x9"
-   ```
-
-3. **Combined Multi-channel Notifications:**
-   ```bash
-   --notify "pushover://USER@TOKEN" \
-   --notify "https://hooks.slack.com/services/..."
-   ```
-
-Prefer loading these URLs from `CANARY_NOTIFY` or a protected, untracked TOML
-file so credentials do not appear in process arguments. Verify a configured
-provider independently of check state with:
+Then build from source:
 
 ```bash
-CANARY_NOTIFY='https://hooks.slack.com/services/...' \
-  canary notify test slack
+nimble install -d
+nimble build -y
+install -Dm755 build/canary /usr/local/bin/canary
 ```
 
----
+Dependencies are constrained in [canary.nimble](canary.nimble). Only Linux is
+officially supported in the 0.1.x series.
 
-## Integration with Metronome/Metronome-Web
+## Documentation
 
-[Metronome](https://github.com/titanomachy/Metronome)/[Metronome-Web](https://github.com/titanomachy/Metronome-Web) serves as the scheduler and dashboard UI for Canary. Configure jobs in the Metronome-Web interface.:
+- [Checks](docs/checks.md): all check types, assertions, timing, and IPv6.
+- [Configuration](docs/configuration.md): TOML, environment variables,
+  precedence, identities, and secrets.
+- [Notifications](docs/notifications.md): providers, payloads, testing, and
+  durable delivery.
+- [State machine](docs/state-machine.md): thresholds, outbox transactions,
+  cooldowns, reminders, and silences.
+- [Architecture](docs/architecture.md): module and process boundaries.
+- [Security](docs/security.md): validation, redaction, and helper processes.
+- [Development](docs/development.md) and [testing](docs/testing.md): local
+  workflow, fixtures, and quality checks.
+- [Examples](examples/README.md): a tested local demo plus Metronome-Web, cron,
+  and systemd timer recipes.
+- [Changelog](CHANGELOG.md), [contributing guide](CONTRIBUTING.md), and
+  [baseline contract](docs/baseline-contract.md).
 
-| Job Name in Metronome-Web | Recommended Schedule | Example Command |
-| :--- | :--- | :--- |
-| **Health: Production API** | `every 1 minute` or `*/1 * * * *` | `/opt/canary/canary http https://api.example.com/health --search "ok" --retries 2 --notify "https://hooks.slack.com/..."` |
-| **SSL Expiry: Web Server** | `every 1 day` or `0 8 * * *` | `/opt/canary/canary ssl api.example.com --minDays 14 --notify "pushover://USER@TOKEN"` |
-| **Database Port: Postgres** | `every 2 minutes` or `*/2 * * * *` | `/opt/canary/canary tcp db.internal -p 5432 --timeout 1000 --retries 2` |
-| **DNS Resolution: Core API** | `every 5 minutes` or `*/5 * * * *` | `/opt/canary/canary dns api.example.com --expected "93.184.216.34"` |
+## Limitations and security
 
-### Why this combination works:
-- **Automatic Response-Time Graphs:** Canary output (for example, `HTTP OK - Response time: 42ms`) and process execution duration are logged to SQLite by Metronome-Web and visualized in Apache ECharts.
-- **Exit Code Integration:** Exit code `0` displays a green success status; exit code `1` marks the run as failed and highlights the error message in the history log.
+- Canary 0.1.x is Linux-only. TLS certificate inspection temporarily uses the
+  OpenSSL executable; ICMP uses `ping`.
+- Canary is a single-run probe, not a scheduler, dashboard, or heartbeat
+  receiver. Heartbeat/dead-man monitoring belongs in the orchestrator.
+- Notification delivery is at-least-once. A provider can receive a duplicate
+  if the process exits after sending but before marking an outbox row sent.
+- HTTP `--maxLatency` covers the complete Canary HTTP operation. Optional
+  libcurl phase timings are diagnostic and can sum to slightly less.
+- Put webhook URLs, bearer tokens, and authorization headers in protected
+  environment/service files or an untracked TOML file. CLI arguments and
+  environment variables remain observable to sufficiently privileged users.
+- Generated IDs intentionally remove URL credentials, queries, fragments,
+  command arguments, and assertions. Use a stable explicit `--id` when checks
+  against the same target need independent state.
 
----
+Canary invokes helpers and local commands with argument arrays, never through a
+shell, and redacts credentials from output and state identities. Read the
+[security contract](docs/security.md) before using checks with secrets.
 
-## Development and testing
-
-All automated tests use local fixtures and require no internet access:
+## Development
 
 ```bash
-nimble test             # unit, integration, and CLI suites
-nimble testCli          # CLI contract only
-nimble testIntegration  # local network and SQLite integration tests
-nimble checkAll         # checks, debug/release builds, and all tests
+nimble test       # unit, integration, CLI, documentation, and example smoke tests
+nimble checkAll   # style/static checks, debug/release builds, and all tests
 ```
 
-See the [testing guide](docs/testing.md) for the coverage matrix and fixture
-design. Public command behavior is specified in the
-[CLI compatibility contract](docs/cli-contract.md).
-
----
+All automated network fixtures bind to local loopback addresses and use random
+ports; the suite does not contact public services. See
+[CONTRIBUTING.md](CONTRIBUTING.md) before submitting a change.
 
 ## License
 
-MIT License. Free for use and modification in your own infrastructure.
+[MIT](LICENSE)

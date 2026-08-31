@@ -6,6 +6,16 @@ All notable changes to Canary are documented in this file.
 
 ### Added
 
+- Focused check, notification, state-machine, and development manuals plus a
+  contributor guide and a documentation index from the shortened README.
+- Credential-free Metronome-Web, cron, and systemd timer examples, and an
+  executable local HTTP/TCP/UDP/mock-webhook demo.
+- A `nimble testDocs` task that validates local Markdown links and documentation
+  structure, then smoke-tests the local demo; it is also part of `nimble test`
+  and `nimble checkAll`.
+- A least-privilege Linux GitHub Actions workflow on Nim 2.2.10 that runs the
+  complete `nimble checkAll` contract, including documentation and examples.
+
 - A shellless `command` check for local executables, with repeatable literal
   argv values, one total timeout, an expected exit code, and an optional
   combined stdout/stderr substring assertion.
@@ -68,6 +78,10 @@ All notable changes to Canary are documented in this file.
 
 ### Changed
 
+- Reduced the README to project positioning, a five-minute quickstart, check
+  overview, installation, documentation links, and explicit limitations and
+  security notes; detailed contracts now live under `docs/`.
+
 - Generated command state identities contain only the executable; argv and
   assertion text stay out of persistence and public diagnostics. Operators can
   use `--id` to separate multiple probes of the same executable.
@@ -86,8 +100,8 @@ All notable changes to Canary are documented in this file.
   `toml_serialization` to `0.2.x`; CLI black-box tests guard upgrades.
 - State transitions now run in an immediate SQLite transaction so concurrent
   processes cannot lose failure-count updates.
-- A first failure below `--retries` is stored as `UNKNOWN`; it reaches `DOWN`
-  and emits an alert only at the configured threshold.
+- A first failure below `--retries` is stored as `PENDING_DOWN`; it reaches
+  `DOWN` and emits an alert only at the configured threshold.
 - UDP checks now require a response before the timeout and enforce `--expected`.
 - TCP checks retain connect-only behavior by default, while `--request` and
   `--expected` enable application-level probes without logging probe contents.
