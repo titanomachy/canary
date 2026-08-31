@@ -1,13 +1,8 @@
-# Global Nimble installs flatten srcDir into the installed package root. Keep
-# one version source while making the manifest readable in both layouts.
-when system.fileExists(thisDir() & "/src/canary_contract.nim"):
-  include "src/canary_contract.nim"
-else:
-  include "canary_contract.nim"
-
 # Package
 
-version       = CanaryVersion
+# Keep this literal in sync with CanaryVersion in src/canary_contract.nim.
+# Nimble metadata readers reject computed version assignments.
+version       = "0.1.2"
 author        = "titanomachy"
 description   = "A lightweight, standalone service health and uptime monitoring tool."
 license       = "MIT"

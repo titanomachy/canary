@@ -1,7 +1,7 @@
 const
-  ## Canonical package and CLI version. The Nimble manifest includes this file
-  ## from src/ in a checkout or from the flattened package root after install.
-  CanaryVersion* = "0.1.0"
+  ## CLI version. Keep this in sync with the literal in canary.nimble; Nimble
+  ## metadata readers require the manifest assignment to be a string literal.
+  CanaryVersion* = "0.1.2"
 
   ## Stable CLI exit-code contract.
   ExitUp* = 0

@@ -34,6 +34,16 @@ proc localLinkTargets(markdown: string): seq[string] =
       result.add(target)
     offset = finish + 1
 
+proc stringAssignment(source, name: string): string =
+  for line in source.splitLines():
+    let stripped = line.strip()
+    if stripped.startsWith(name):
+      let openingQuote = stripped.find('"')
+      if openingQuote >= 0:
+        let closingQuote = stripped.find('"', openingQuote + 1)
+        if closingQuote > openingQuote:
+          return stripped[openingQuote + 1 ..< closingQuote]
+
 suite "documentation contract":
   test "all local Markdown links resolve":
     for document in markdownFiles():
@@ -51,6 +61,16 @@ suite "documentation contract":
       "CONTRIBUTING.md"
     ]:
       check requiredLink in readme
+
+  test "Nimble and CLI versions stay in sync":
+    let manifestVersion = stringAssignment(
+      readFile(ProjectRoot / "canary.nimble"), "version"
+    )
+    let cliVersion = stringAssignment(
+      readFile(ProjectRoot / "src" / "canary_contract.nim"), "CanaryVersion*"
+    )
+    check manifestVersion.len > 0
+    check manifestVersion == cliVersion
 
   test "examples are credential-free and include scheduler recipes":
     let exampleConfig = readFile(ProjectRoot / "examples" / "canary.toml")

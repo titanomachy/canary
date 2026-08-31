@@ -13,8 +13,9 @@ timers instead of running its own daemon or scheduler.
 ## Five-minute quickstart
 
 Canary 0.1.x supports Linux and requires Nim 2.0 or newer, a C compiler,
-SQLite development libraries, OpenSSL command-line tools, and `ping`. The
-optional HTTP timing mode also requires the libcurl shared library.
+SQLite development libraries, the PCRE runtime, OpenSSL command-line tools,
+and `ping`. The optional HTTP timing mode also requires the libcurl shared
+library.
 
 ```bash
 git clone https://github.com/titanomachy/canary.git
@@ -152,6 +153,7 @@ Install these platform dependencies first. Package names vary by distribution:
 - Nim 2.0 or newer and Nimble;
 - GCC or Clang;
 - SQLite headers and shared library (`libsqlite3-dev` or `sqlite-devel`);
+- the PCRE runtime (`libpcre3` or `pcre`) for regular-expression assertions;
 - OpenSSL command-line tools;
 - `ping` (usually `iputils-ping`);
 - the libcurl shared library for `http --verbose`/`--timing` only.

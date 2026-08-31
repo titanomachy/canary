@@ -2,6 +2,21 @@
 
 All notable changes to Canary are documented in this file.
 
+## [0.1.2] - 2026-08-31
+
+### Fixed
+
+- Use a literal package version in `canary.nimble`, as required by Nimble's
+  metadata parser, and verify that it stays synchronized with the CLI version.
+- Install and document the PCRE runtime required by regular-expression checks.
+
+## [0.1.1] - 2026-08-31
+
+### Changed
+
+- Expand the README check examples and present the documentation links as one
+  highlighted block.
+
 ## [0.1.0] - 2026-08-31
 
 ### Added

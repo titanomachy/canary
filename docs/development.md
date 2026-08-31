@@ -2,7 +2,8 @@
 
 Canary targets Linux in the 0.1.x series and builds with Nim 2.0 or newer. The
 repository currently tests with Nim 2.2. Development requires a C compiler,
-SQLite headers/library, OpenSSL, `ping`, and libcurl for HTTP timing tests.
+SQLite headers/library, the PCRE runtime, OpenSSL, `ping`, and libcurl for HTTP
+timing tests.
 
 ## Set up
 

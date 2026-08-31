@@ -126,6 +126,7 @@ claiming that check's pending outbox rows until the stored UTC end time.
 
 ## Version source
 
-`src/canary_contract.nim` is the single source of truth for the package and CLI
-version. Both the Nimble manifest and `canary --version` consume
-`CanaryVersion` from that file.
+The package version is a string literal in `canary.nimble`, as required by
+Nimble metadata readers. The CLI version is `CanaryVersion` in
+`src/canary_contract.nim`; the documentation test requires both values to stay
+in sync.

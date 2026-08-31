@@ -25,7 +25,7 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install --yes \
-            iputils-ping libcurl4-openssl-dev libsqlite3-dev openssl
+            iputils-ping libcurl4-openssl-dev libpcre3 libsqlite3-dev openssl
 
       - name: Install Nim
         uses: jiro4989/setup-nim-action@v2
