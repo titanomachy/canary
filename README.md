@@ -133,7 +133,17 @@ and maintenance-silence semantics.
 
 ## Configuration
 
-Defaults resolve in this order:
+All configuration sources are merged into the same typed model before
+validation and execution:
+
+```text
+built-in defaults ─┐
+TOML configuration ┼─→ CanaryConfig → validation → app.run(config)
+environment ────────┤
+CLI options ────────┘
+```
+
+Higher-priority sources override lower-priority sources in this order:
 
 ```text
 built-in defaults < TOML < CANARY_* environment < CLI options
