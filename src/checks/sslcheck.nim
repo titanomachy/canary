@@ -33,10 +33,10 @@ proc checkSsl*(hostOrUrl: string, minDays: int = 14, port: int = 443,
   if minDays < 0:
     raise newException(CanaryConfigError, "minDays cannot be negative")
 
-  when not defined(linux):
+  when not (defined(linux) or defined(windows)):
     raise newException(
       CanaryConfigError,
-      "SSL checks are supported only on Linux in Canary 0.1.x"
+      "SSL checks are supported only on Linux and Windows"
     )
   else:
     let execute = if runner.isNil: runProcess else: runner

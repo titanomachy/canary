@@ -2,6 +2,8 @@ import std/[dynlib, httpcore, math, os, strutils, uri]
 import ../common
 
 type
+  CurlLibraryError* = object of LibraryError
+
   CurlHandle = pointer
   CurlCode = cint
   CurlSlist {.pure, final.} = object
@@ -43,6 +45,15 @@ type
     timings*: HttpPhaseTimings
 
 const
+  WindowsCurlLibraryNames* = [
+    "libcurl.dll", "libcurl-x64.dll", "libcurl-4.dll", "curl.dll"
+  ]
+  WindowsCurlInstallHelp* =
+    "libcurl is required for HTTP --timing on Windows. Download a libcurl " &
+    "DLL matching Canary's architecture, place it and its dependency DLLs " &
+    "next to canary.exe, or add their directory to PATH. Installing curl.exe " &
+    "alone is not sufficient. Tried: " & WindowsCurlLibraryNames.join(", ")
+
   CurlGlobalDefault = 3.cint
   CurlOk = 0.cint
   CurlOperationTimedOut = 28.cint
@@ -70,9 +81,36 @@ const
   CurlInfoStartTransferTime = 0x30_0011.cint
   CurlInfoAppConnectTime = 0x30_0021.cint
 
+proc curlInstallHelp(): string =
+  when defined(windows):
+    WindowsCurlInstallHelp
+  elif defined(macosx):
+    "libcurl is required for HTTP --timing. Install the libcurl shared " &
+      "library and make it available to the dynamic library loader."
+  else:
+    "libcurl is required for HTTP --timing. Install your distribution's " &
+      "libcurl runtime package."
+
 proc loadCurlApi(): CurlApi =
   when defined(windows):
-    result.library = loadLib("libcurl.dll")
+    # Use explicit directories rather than LoadLibrary's implicit search. This
+    # guarantees the documented executable-directory and PATH behavior without
+    # also accepting a DLL planted in an unrelated working directory.
+    var searchDirectories = @[getAppDir()]
+    for pathEntry in getEnv("PATH").split(PathSep):
+      var directory = pathEntry
+      if directory.len >= 2 and directory[0] == '"' and
+          directory[^1] == '"':
+        directory = directory[1 .. ^2]
+      if directory.len > 0 and directory notin searchDirectories:
+        searchDirectories.add(directory)
+    for directory in searchDirectories:
+      for libraryName in WindowsCurlLibraryNames:
+        result.library = loadLib(directory / libraryName)
+        if result.library != nil:
+          break
+      if result.library != nil:
+        break
   elif defined(macosx):
     result.library = loadLib("libcurl.4.dylib")
     if result.library == nil:
@@ -82,14 +120,18 @@ proc loadCurlApi(): CurlApi =
     if result.library == nil:
       result.library = loadLib("libcurl.so")
   if result.library == nil:
-    raise newException(LibraryError, "libcurl is unavailable")
+    raise newException(CurlLibraryError, curlInstallHelp())
 
   template bindSymbol(field: untyped, symbolName: string,
                       ProcType: typedesc) =
     field = cast[ProcType](symAddr(result.library, symbolName))
     if field == nil:
       unloadLib(result.library)
-      raise newException(LibraryError, "libcurl is missing a required symbol")
+      raise newException(
+        CurlLibraryError,
+        "The loaded libcurl library is incompatible or missing required " &
+          "symbols. " & curlInstallHelp()
+      )
 
   bindSymbol(result.globalInit, "curl_global_init", CurlGlobalInitProc)
   bindSymbol(result.globalCleanup, "curl_global_cleanup", CurlGlobalCleanupProc)

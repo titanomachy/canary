@@ -261,6 +261,11 @@ proc checkHttp*(url: string,
       kind: "http", target: displayUrl, isOk: false, message: msg,
       latencyMs: responseTimeMs, details: "Timeout", httpTimings: timings
     )
+  except CurlLibraryError:
+    return failedHttpResult(
+      displayUrl, getCurrentExceptionMsg(), startTime,
+      getCurrentExceptionMsg(), timings
+    )
   except HttpRequestError, OSError, IOError, ValueError:
     let responseTimeMs = elapsedMilliseconds(startTime)
     let msg = "HTTP ERROR - " & displayUrl &

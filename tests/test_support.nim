@@ -2,8 +2,8 @@ import std/[os, osproc, streams, strutils, times]
 
 const
   ProjectRoot* = currentSourcePath().parentDir.parentDir
-  FixtureBinary* = ProjectRoot / "build" / "local_server"
-  StateWorkerBinary* = ProjectRoot / "build" / "state_worker"
+  FixtureBinary* = ProjectRoot / "build" / ("local_server" & ExeExt)
+  StateWorkerBinary* = ProjectRoot / "build" / ("state_worker" & ExeExt)
 
 type LocalServer* = object
   process*: Process

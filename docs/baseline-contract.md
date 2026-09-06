@@ -24,18 +24,24 @@ records state but does not send notifications.
 
 ## Supported platform
 
-Linux is the only supported platform for the `0.1.x` series. The baseline is
+Linux and 64-bit Windows are supported for the `0.1.x` series. The baseline is
 Nim 2.0 or newer, a C compiler, SQLite development libraries, and the system
-tools used by individual checks. The current baseline was verified on Linux
-amd64 with Nim 2.2.10.
+tools used by individual checks. CI builds both platforms with Nim 2.2.10.
 
 Optional HTTP phase timing uses the system libcurl shared library in process.
 The `curl` executable is not required. Ordinary HTTP checks continue to use
 Nim's HTTP client and do not require libcurl to perform a request.
 
-macOS and Windows may compile in part, but they are not supported until their
-complete check suites run in CI. In particular, the current TLS and ICMP checks
-depend on platform-specific command-line tools.
+On Windows, timing mode probes common libcurl DLL names both beside
+`canary.exe` and through the normal DLL search path. When no compatible DLL can
+be loaded, the check result explains where to install it and notes that the DLL
+and its dependencies must match Canary's architecture.
+
+macOS may compile in part but is not supported until its compatibility suite
+runs in CI. TLS requires the OpenSSL executable on both supported platforms.
+ICMP uses the platform's `ping` executable with Linux- or Windows-specific
+arguments. The supported 64-bit Windows build targets the OpenSSL 3 x64 DLL
+ABI used by current MSYS2 packages.
 
 ## Exit codes and output
 
@@ -94,8 +100,8 @@ JSON, state IDs, notification labels, and diagnostics. Notification diagnostics
 identify at most the scheme and host; they never include credentials, paths, or
 query values.
 
-On supported Linux systems, ICMP invokes `ping` and TLS invokes `openssl`
-directly with argument arrays. No target is interpreted by a shell. The TLS
+On Linux and Windows, ICMP invokes `ping` and TLS invokes `openssl` directly
+with argument arrays. No target is interpreted by a shell. The TLS
 implementation uses separate `s_client` and `x509` invocations, passing the leaf
 certificate over stdin rather than through a shell pipeline.
 

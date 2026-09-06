@@ -1,4 +1,4 @@
-import std/[monotimes, osproc, streams, times]
+import std/[monotimes, os, osproc, streams, times]
 
 type
   ProcessResult* = object
@@ -26,7 +26,16 @@ proc runProcess*(command: string, args: seq[string], input: string = "",
     processInput.write(input)
   processInput.close()
 
-  result.exitCode = process.waitForExit(timeoutMs)
+  while process.running() and
+      (getMonoTime() - started).inMilliseconds < timeoutMs:
+    sleep(5)
+  if process.running():
+    result.timedOut = true
+    process.terminate()
+    discard process.waitForExit()
+    # Keep the established cross-platform timeout status instead of exposing
+    # the platform-specific termination code (Windows commonly reports zero).
+    result.exitCode = 137
+  else:
+    result.exitCode = process.waitForExit()
   result.output = process.outputStream().readAll()
-  result.timedOut = result.exitCode == 137 and
-    (getMonoTime() - started).inMilliseconds >= timeoutMs

@@ -1,6 +1,6 @@
 # Canary
 
-Canary is a lightweight Linux health-check CLI written in Nim. A scheduler
+Canary is a lightweight cross-platform health-check CLI written in Nim. A scheduler
 starts one process, Canary performs one HTTP, TLS, TCP, UDP, DNS, ICMP, or local
 command check, prints a result, and exits. It is stateless by default; SQLite
 state, failure/recovery thresholds, and durable notifications are opt-in.
@@ -12,7 +12,7 @@ timers instead of running its own daemon or scheduler.
 
 ## Five-minute quickstart
 
-Canary 0.1.x supports Linux and requires Nim 2.0 or newer, a C compiler,
+Canary 0.1.x supports Linux and Windows and requires Nim 2.0 or newer, a C compiler,
 SQLite development libraries, the PCRE runtime, OpenSSL command-line tools,
 and `ping`. The optional HTTP timing mode also requires the libcurl shared
 library.
@@ -168,6 +168,13 @@ Install these platform dependencies first. Package names vary by distribution:
 - `ping` (usually `iputils-ping`);
 - the libcurl shared library for `http --verbose`/`--timing` only.
 
+On Windows, timing mode probes `libcurl.dll`, `libcurl-x64.dll`,
+`libcurl-4.dll`, and `curl.dll`. Use a DLL matching Canary's architecture and
+place it, together with any dependency DLLs, next to `canary.exe` or in a
+directory on `PATH`. The `curl.exe` command alone does not provide the shared
+library used by timing mode. HTTPS additionally requires the 64-bit OpenSSL 3
+runtime DLLs; MSYS2's `mingw-w64-x86_64-openssl` package supplies them.
+
 Then build from source:
 
 ```bash
@@ -176,8 +183,12 @@ nimble build -y
 install -Dm755 build/canary /usr/local/bin/canary
 ```
 
-Dependencies are constrained in [canary.nimble](canary.nimble). Only Linux is
-officially supported in the 0.1.x series.
+On Windows, run `nimble build -y` from PowerShell or Command Prompt and use
+`build\canary.exe`. The POSIX `install` command above applies only to Linux.
+
+Dependencies are constrained in [canary.nimble](canary.nimble). Linux and
+64-bit Windows are tested in GitHub Actions; the scheduler examples remain
+Linux-oriented.
 
 ## Documentation
 

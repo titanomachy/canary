@@ -3,7 +3,8 @@ import std/[httpcore, json, monotimes, net, options, os, strutils, unittest]
 import ../../src/[common, input_contract, network_target, notifier,
                     process_runner]
 import ../../src/canary/[app, cli, config]
-import ../../src/checks/[commandcheck, dnscheck, httpcheck, icmpcheck, sslcheck]
+import ../../src/checks/[commandcheck, dnscheck, http_timing, httpcheck,
+                         icmpcheck, sslcheck]
 import ../test_support
 
 proc readState(dbPath: string, jobId: string): tuple[status: string,
@@ -20,6 +21,16 @@ proc readState(dbPath: string, jobId: string): tuple[status: string,
   )
 
 suite "input parsing and validation":
+  test "Windows HTTP timing names and recovery guidance are actionable":
+    check "libcurl.dll" in WindowsCurlLibraryNames
+    check "libcurl-x64.dll" in WindowsCurlLibraryNames
+    check "libcurl-4.dll" in WindowsCurlLibraryNames
+    check "curl.dll" in WindowsCurlLibraryNames
+    check "next to canary.exe" in WindowsCurlInstallHelp
+    check "PATH" in WindowsCurlInstallHelp
+    check "architecture" in WindowsCurlInstallHelp
+    check "curl.exe alone is not sufficient" in WindowsCurlInstallHelp
+
   test "custom HTTP headers accept documented separators":
     let commaHeaders = parseCustomHeaders(
       "Authorization: Bearer test,User-Agent: Canary"
@@ -674,17 +685,32 @@ suite "argument-safe system checks":
 
   test "the default process runner treats shell syntax as a literal argument":
     let shellSyntax = "value; echo should-not-run | touch nowhere"
-    let execution = runProcess(
-      "/usr/bin/printf", @["%s", shellSyntax], timeoutMs = 1000
-    )
+    when defined(windows):
+      let testDir = newTestDir("literal-command-argument")
+      defer: removeDir(testDir)
+      let inputFile = testDir / "input.txt"
+      writeFile(inputFile, shellSyntax & "\n")
+      let execution = runProcess(
+        "findstr.exe", @["/L", "/C:" & shellSyntax, inputFile],
+        timeoutMs = 1000
+      )
+    else:
+      let execution = runProcess(
+        "/usr/bin/printf", @["%s", shellSyntax], timeoutMs = 1000
+      )
     check execution.exitCode == 0
     check not execution.timedOut
-    check execution.output == shellSyntax
+    check execution.output.strip() == shellSyntax
 
   test "the default process runner enforces its timeout":
-    let execution = runProcess(
-      "/usr/bin/sleep", @["1"], timeoutMs = 25
-    )
+    when defined(windows):
+      let execution = runProcess(
+        "ping.exe", @["-n", "3", "127.0.0.1"], timeoutMs = 25
+      )
+    else:
+      let execution = runProcess(
+        "/usr/bin/sleep", @["1"], timeoutMs = 25
+      )
     check execution.timedOut
     check execution.exitCode != 0
 
@@ -695,7 +721,10 @@ suite "argument-safe system checks":
                                      timeoutMs: int): ProcessResult =
       called = true
       check command == "ping"
-      check args == @["-c", "3", "-W", "2", "127.0.0.1"]
+      when defined(windows):
+        check args == @["-n", "3", "-w", "2500", "127.0.0.1"]
+      else:
+        check args == @["-c", "3", "-W", "2", "127.0.0.1"]
       check input.len == 0
       check timeoutMs == 2500
       ProcessResult(exitCode: 0)
@@ -708,7 +737,10 @@ suite "argument-safe system checks":
                                      input: string,
                                      timeoutMs: int): ProcessResult =
       check command == "ping"
-      check args == @["-6", "-c", "1", "-W", "1", "::1"]
+      when defined(windows):
+        check args == @["-6", "-n", "1", "-w", "1000", "::1"]
+      else:
+        check args == @["-6", "-c", "1", "-W", "1", "::1"]
       check input.len == 0
       check timeoutMs == 1000
       ProcessResult(exitCode: 0)

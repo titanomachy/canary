@@ -1,7 +1,7 @@
 # Development
 
-Canary targets Linux in the 0.1.x series and builds with Nim 2.0 or newer. The
-repository currently tests with Nim 2.2. Development requires a C compiler,
+Canary targets Linux and 64-bit Windows in the 0.1.x series and builds with Nim
+2.0 or newer. The repository currently tests with Nim 2.2. Development requires a C compiler,
 SQLite headers/library, the PCRE runtime, OpenSSL, `ping`, and libcurl for HTTP
 timing tests.
 
@@ -52,6 +52,11 @@ providers. Network tests bind `127.0.0.1` or `::1` on kernel-assigned ports.
 See [`testing.md`](testing.md) for coverage and fixture behavior.
 The Linux GitHub Actions workflow runs the same `nimble checkAll` command with
 Nim 2.2.10, so documentation and executable examples cannot bypass CI.
+The Windows job runs `nimble testWindows`, which performs static/debug/release
+builds and native smoke tests for HTTP and timing, regex assertions, TCP, UDP,
+DNS, ICMP, TLS, command execution and timeout handling, SQLite state, and the
+documentation contract. The executable local demo remains a POSIX shell test
+in the Linux job.
 
 ## Change workflow
 

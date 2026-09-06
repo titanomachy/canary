@@ -136,9 +136,10 @@ responses retry over TCP within the same deadline.
 canary icmp 192.0.2.10 --count 3 --timeout 3000
 ```
 
-`--count` defaults to `1` and accepts 1 through 100. Canary invokes Linux
-`ping` directly and bounds the complete helper process with `--timeout`. An
-IPv6 literal explicitly selects `ping -6`.
+`--count` defaults to `1` and accepts 1 through 100. Canary invokes the Linux
+or Windows `ping` executable directly, using the native arguments on each
+platform, and bounds the complete helper process with `--timeout`. An IPv6
+literal explicitly selects `ping -6`.
 
 ## Local command
 

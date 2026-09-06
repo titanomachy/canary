@@ -9,6 +9,18 @@ All notable changes to Canary are documented in this file.
 - Use a literal package version in `canary.nimble`, as required by Nimble's
   metadata parser, and verify that it stays synchronized with the CLI version.
 - Install and document the PCRE runtime required by regular-expression checks.
+- Probe common Windows libcurl DLL names beside `canary.exe` and on `PATH` for
+  HTTP timing mode, and return actionable installation guidance when no
+  compatible timing library can be loaded.
+- Detect command timeouts independently of Unix signal exit codes, and use the
+  native Windows `ping` argument format for ICMP checks.
+
+### Added
+
+- Add a Windows GitHub Actions job with native coverage for builds, HTTP phase
+  timing, PCRE assertions, TCP, UDP, DNS, ICMP, TLS, command execution, SQLite
+  state, and documentation contracts.
+- Support OpenSSL-backed certificate checks on Windows.
 
 ## [0.1.1] - 2026-08-31
 

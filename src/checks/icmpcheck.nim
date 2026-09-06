@@ -10,10 +10,10 @@ proc checkIcmp*(host: string, count: int = 1, timeoutMs: int = 5000,
   validateCommon(timeoutMs, 1)
   let networkHost = normalizedNetworkHost(host)
 
-  when not defined(linux):
+  when not (defined(linux) or defined(windows)):
     raise newException(
       CanaryConfigError,
-      "ICMP checks are supported only on Linux in Canary 0.1.x"
+      "ICMP checks are supported only on Linux and Windows"
     )
   else:
     let execute = if runner.isNil: runProcess else: runner
@@ -23,9 +23,12 @@ proc checkIcmp*(host: string, count: int = 1, timeoutMs: int = 5000,
         args.add("-6")
     except ValueError:
       discard
-    args.add(@[
-      "-c", $count, "-W", $max(1, timeoutMs div 1000), networkHost
-    ])
+    when defined(windows):
+      args.add(@["-n", $count, "-w", $timeoutMs, networkHost])
+    else:
+      args.add(@[
+        "-c", $count, "-W", $max(1, timeoutMs div 1000), networkHost
+      ])
     var execution: ProcessResult
     try:
       execution = execute(

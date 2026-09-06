@@ -72,3 +72,19 @@ task checkAll, "Run static checks, debug/release builds, and all tests":
   runIntegrationTests()
   runCliTests()
   runDocumentationTests()
+
+when defined(windows):
+  task testWindows, "Run Windows static, build, and compatibility checks":
+    exec "nim check --styleCheck:error --nimcache:build/nimcache-check src/canary.nim"
+    exec "nim check --styleCheck:error --nimcache:build/nimcache-unit-check tests/unit/test_unit.nim"
+    exec "nim check --styleCheck:error --nimcache:build/nimcache-integration-check tests/integration/test_integration.nim"
+    exec "nim check --styleCheck:error --nimcache:build/nimcache-docs-check tests/docs/test_docs.nim"
+    exec "nim check --styleCheck:error --nimcache:build/nimcache-fixture-check tests/fixtures/local_server.nim"
+    exec "nim check --styleCheck:error --nimcache:build/nimcache-worker-check tests/fixtures/state_worker.nim"
+    exec "nim check --styleCheck:error --nimcache:build/nimcache-windows-check tests/windows/test_windows.nim"
+    exec "nim c --nimcache:build/nimcache-debug -o:build/canary src/canary.nim"
+    exec "nim c -d:release --nimcache:build/nimcache-release -o:build/canary-release src/canary.nim"
+    runUnitTests()
+    runIntegrationTests()
+    exec "nim c -r --nimcache:build/nimcache-windows tests/windows/test_windows.nim"
+    exec "nim c -r --nimcache:build/nimcache-docs tests/docs/test_docs.nim"

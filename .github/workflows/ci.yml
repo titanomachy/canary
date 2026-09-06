@@ -43,3 +43,52 @@ jobs:
         run: |
           nimble install -y
           canary --version
+
+  windows:
+    name: Windows / Nim 2.2.10
+    runs-on: windows-latest
+    timeout-minutes: 25
+
+    steps:
+      - name: Preserve LF line endings
+        run: git config --global core.autocrlf input
+
+      - name: Check out repository
+        uses: actions/checkout@v6
+
+      - name: Install Windows runtime dependencies
+        id: msys2
+        uses: msys2/setup-msys2@v2
+        with:
+          msystem: MINGW64
+          suppress-deprecation-warnings: msystem-mingw64
+          update: true
+          install: >-
+            mingw-w64-x86_64-curl
+            mingw-w64-x86_64-openssl
+            mingw-w64-x86_64-pcre
+
+      - name: Expose runtime DLLs
+        shell: pwsh
+        run: |
+          $runtimeBin = Join-Path '${{ steps.msys2.outputs.msys2-location }}' 'mingw64\bin'
+          $runtimeBin | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
+          New-Item -ItemType Directory -Force build | Out-Null
+          Copy-Item (Join-Path $runtimeBin 'libpcre-1.dll') 'build\pcre64.dll'
+
+      - name: Install Nim
+        uses: jiro4989/setup-nim-action@v2
+        with:
+          nim-version: '2.2.10'
+          repo-token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Install package dependencies
+        run: nimble install -d -y
+
+      - name: Run Windows compatibility checks
+        run: nimble testWindows -y
+
+      - name: Smoke-test a global package install
+        run: |
+          nimble install -y
+          canary --version

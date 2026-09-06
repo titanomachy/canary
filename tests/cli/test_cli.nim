@@ -11,7 +11,7 @@ type CliResult = object
 
 const
   ProjectRoot = currentSourcePath().parentDir.parentDir.parentDir
-  CanaryBinary = ProjectRoot / "build" / "canary"
+  CanaryBinary = ProjectRoot / "build" / ("canary" & ExeExt)
 
 proc testEnvironment(overrides: seq[(string, string)] = @[]): StringTableRef =
   ## Keep unrelated process settings, but isolate all Canary configuration so
