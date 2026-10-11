@@ -41,6 +41,9 @@ canary/cli.nim  -- builds -->  CanaryConfig
 - `src/checks/http_transport.nim` runs ordinary HTTP requests through Nim's
   asynchronous client with one deadline for connection, TLS, redirects, and
   response transfer. Each HTTPS hop verifies its certificate and host identity.
+- `src/process_child.nim` owns helper-process groups, Windows Job Objects, and
+  nonblocking output reads; `src/process_runner.nim` applies the execution and
+  output-collection deadline.
 
 The adapter resolves configuration as built-in defaults, then TOML, then
 `CANARY_*` environment variables, then CLI options. It reads an explicit

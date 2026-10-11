@@ -1,5 +1,5 @@
 import nim_sqlite
-import std/[httpcore, json, monotimes, net, options, os, strutils, unittest]
+import std/[httpcore, json, monotimes, net, options, os, strutils, times, unittest]
 import ../../src/[common, input_contract, network_target, notifier,
                     process_runner]
 import ../../src/canary/[app, cli, config]
@@ -713,6 +713,41 @@ suite "argument-safe system checks":
       )
     check execution.timedOut
     check execution.exitCode != 0
+
+  test "timeout kills subprocesses even when their parent has exited":
+    for mode in ["wait-child", "orphan-child"]:
+      let testDir = newTestDir("process-tree-" & mode)
+      defer: removeDir(testDir)
+      let started = getMonoTime()
+      let execution = runProcess(
+        ProcessWorkerBinary, @[mode, testDir], timeoutMs = 300
+      )
+      check execution.timedOut
+      check execution.exitCode == 137
+      check (getMonoTime() - started).inMilliseconds < 700
+      require fileExists(testDir / "ready")
+      sleep(900)
+      check not fileExists(testDir / "escaped")
+
+  when defined(posix):
+    test "timeout cannot be defeated by ignoring SIGTERM":
+      let started = getMonoTime()
+      let execution = runProcess(
+        ProcessWorkerBinary, @["ignore-term"], timeoutMs = 100
+      )
+      check execution.timedOut
+      check execution.exitCode == 137
+      check (getMonoTime() - started).inMilliseconds < 700
+
+  test "process runner preserves combined output and literal arguments":
+    let execution = runProcess(
+      ProcessWorkerBinary, @["echo", "stdout;literal\"", "stderr value"],
+      timeoutMs = 1000
+    )
+    check not execution.timedOut
+    check execution.exitCode == 0
+    check "stdout;literal\"" in execution.output
+    check "stderr value" in execution.output
 
   test "ICMP passes the host as one argv element without a shell":
     var called = false

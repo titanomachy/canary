@@ -8,6 +8,8 @@ All notable changes to Canary are documented in this file.
 
 - Bound ordinary HTTP connection and TLS negotiation with the configured
   timeout, and share one deadline across redirects in both HTTP transports.
+- Bound process shutdown and output collection, and terminate managed command
+  descendants on timeout instead of waiting indefinitely after SIGTERM.
 
 ## [0.1.2] - 2026-08-31
 

@@ -4,6 +4,7 @@ const
   ProjectRoot* = currentSourcePath().parentDir.parentDir
   FixtureBinary* = ProjectRoot / "build" / ("local_server" & ExeExt)
   StateWorkerBinary* = ProjectRoot / "build" / ("state_worker" & ExeExt)
+  ProcessWorkerBinary* = ProjectRoot / "build" / ("process_worker" & ExeExt)
 
 type LocalServer* = object
   process*: Process

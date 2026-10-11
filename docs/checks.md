@@ -155,8 +155,13 @@ canary command /usr/bin/systemctl \
 Each repeatable `--arg` becomes one unchanged argv element; no shell parses the
 executable or arguments. `--exitCode` defaults to `0` and accepts 0 through
 255. `--outputMatch` is a case-sensitive literal substring in combined stdout
-and stderr. A timeout always fails, regardless of termination status. A
-missing or unstartable executable is a configuration error.
+and stderr. A timeout always fails, regardless of termination status. A command
+must finish and close its inherited output pipes within the timeout.
+Canary terminates its process tree on timeout, including children left behind
+by an exited parent. Linux uses an isolated process group and Windows uses a
+Job Object. Programs must not deliberately detach from the managed group.
+
+A missing or unstartable executable is a configuration error.
 
 Arguments, captured output, and match text stay out of results, state IDs, and
 notifications. Generated identities contain only the executable, so use

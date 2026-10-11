@@ -24,7 +24,7 @@ or a stack trace.
 
 ## Helper-process boundary
 
-Linux is the only supported platform for `0.1.x`.
+Linux and 64-bit Windows are supported for `0.1.x`.
 
 - ICMP starts `ping` with a fixed executable name and an argument array.
 - TLS starts `openssl s_client`, extracts the first PEM certificate in memory,
@@ -34,6 +34,10 @@ Linux is the only supported platform for `0.1.x`.
 - No helper command uses shell evaluation, redirection, command substitution, or
   a pipeline.
 - Helper execution is bounded by the configured timeout.
+- Helpers run in an isolated Linux process group or a Windows Job Object.
+  Timeout terminates the managed tree, including descendants that retain
+  output pipes. Windows processes start suspended until assigned to the job;
+  Linux commands must not deliberately detach from their process group.
 - IPv6 literals remain single argv elements. ICMP removes optional address
   brackets and adds the fixed `-6` flag; TLS formats its OpenSSL connection
   target as `[address]:port` without invoking a shell.

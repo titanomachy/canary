@@ -21,11 +21,16 @@ requires "nim_sqlite"
 
 # Tests
 
+proc buildProcessFixture() =
+  exec "nim c --nimcache:build/nimcache-process-worker -o:build/process_worker tests/fixtures/process_worker.nim"
+
 proc buildTestFixtures() =
+  buildProcessFixture()
   exec "nim c --nimcache:build/nimcache-fixture -o:build/local_server tests/fixtures/local_server.nim"
   exec "nim c --nimcache:build/nimcache-worker -o:build/state_worker tests/fixtures/state_worker.nim"
 
 proc runUnitTests() =
+  buildProcessFixture()
   exec "nim c -r --nimcache:build/nimcache-unit tests/unit/test_unit.nim"
 
 proc runIntegrationTests() =
@@ -66,6 +71,7 @@ task checkAll, "Run static checks, debug/release builds, and all tests":
   exec "nim check --styleCheck:error --nimcache:build/nimcache-docs-check tests/docs/test_docs.nim"
   exec "nim check --styleCheck:error --nimcache:build/nimcache-fixture-check tests/fixtures/local_server.nim"
   exec "nim check --styleCheck:error --nimcache:build/nimcache-worker-check tests/fixtures/state_worker.nim"
+  exec "nim check --styleCheck:error --nimcache:build/nimcache-process-worker-check tests/fixtures/process_worker.nim"
   exec "nim c --nimcache:build/nimcache-debug -o:build/canary-debug src/canary.nim"
   exec "nim c -d:release --nimcache:build/nimcache-release -o:build/canary-release src/canary.nim"
   runUnitTests()
@@ -81,6 +87,7 @@ when defined(windows):
     exec "nim check --styleCheck:error --nimcache:build/nimcache-docs-check tests/docs/test_docs.nim"
     exec "nim check --styleCheck:error --nimcache:build/nimcache-fixture-check tests/fixtures/local_server.nim"
     exec "nim check --styleCheck:error --nimcache:build/nimcache-worker-check tests/fixtures/state_worker.nim"
+    exec "nim check --styleCheck:error --nimcache:build/nimcache-process-worker-check tests/fixtures/process_worker.nim"
     exec "nim check --styleCheck:error --nimcache:build/nimcache-windows-check tests/windows/test_windows.nim"
     exec "nim c --nimcache:build/nimcache-debug -o:build/canary src/canary.nim"
     exec "nim c -d:release --nimcache:build/nimcache-release -o:build/canary-release src/canary.nim"

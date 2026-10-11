@@ -37,6 +37,9 @@ argument, helper-process timeouts are enforced, local command/ICMP/OpenSSL
 checks receive exact argv arrays, command exit/output/timeout assertions are
 classified correctly, invalid input never reaches a runner, and sensitive
 command values and URL secrets are absent from formatted output and state IDs.
+The `process_worker` fixture exercises ignored SIGTERM, waiting children, and
+children holding output pipes after their parent exits. Tests require bounded
+return and verify that children cannot perform delayed work after timeout.
 
 Each state test creates its own temporary SQLite database. The state table
 exercises these paths:
