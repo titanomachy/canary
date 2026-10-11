@@ -1,6 +1,7 @@
-import std/[json, os, osproc, streams, strutils, unittest]
+import std/[json, net, os, osproc, streams, strutils, unittest]
 import ../../src/canary_contract
 import ../../src/process_runner
+import ../../src/system_dns
 import ../test_support
 
 when not defined(windows):
@@ -34,6 +35,13 @@ template describe(result: CliResult) =
   )
 
 suite "Windows compatibility":
+  test "default DNS discovery reads native Windows adapters":
+    let resolver = systemDnsResolver()
+    require resolver.host.len > 0
+    check resolver.port == 53
+    discard parseIpAddress(resolver.host.split('%')[0])
+    check hostsFilePath().endsWith("System32" / "drivers" / "etc" / "hosts")
+
   test "the Windows executable starts":
     let result = runCanary(["--version"])
     result.describe()

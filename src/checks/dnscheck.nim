@@ -1,6 +1,6 @@
 import std/[algorithm, asyncdispatch, asyncnet, monotimes, net, strutils,
             sysrand, times]
-import ../[common, input_contract, network_target]
+import ../[common, input_contract, network_target, system_dns]
 
 type DnsProtocolError = object of CatchableError
 
@@ -191,7 +191,7 @@ proc remainingMilliseconds(deadline: MonoTime): int =
 
 proc udpDnsQuery(query, resolverHost: string, resolverPort: int,
                  deadline: MonoTime): string =
-  let family = parseIpAddress(resolverHost).family
+  let family = parseIpAddress(resolverHost.split('%')[0]).family
   let domain = if family == IpAddressFamily.IPv6: AF_INET6 else: AF_INET
   let socket = newAsyncSocket(domain, SOCK_DGRAM, IPPROTO_UDP)
   defer: socket.close()
@@ -205,7 +205,7 @@ proc udpDnsQuery(query, resolverHost: string, resolverPort: int,
 
 proc tcpDnsQuery(query, resolverHost: string, resolverPort: int,
                  deadline: MonoTime): string =
-  let family = parseIpAddress(resolverHost).family
+  let family = parseIpAddress(resolverHost.split('%')[0]).family
   let domain = if family == IpAddressFamily.IPv6: AF_INET6 else: AF_INET
   let socket = newSocket(domain, SOCK_STREAM, IPPROTO_TCP)
   defer: socket.close()
@@ -226,24 +226,6 @@ proc tcpDnsQuery(query, resolverHost: string, resolverPort: int,
   if result.len != responseLength:
     raise newException(DnsProtocolError, "Incomplete DNS TCP response")
 
-proc systemResolver(): string =
-  try:
-    for line in lines("/etc/resolv.conf"):
-      let components = line.splitWhitespace()
-      if components.len >= 2 and components[0] == "nameserver":
-        var candidate = components[1]
-        let zone = candidate.find('%')
-        if zone >= 0:
-          candidate = candidate[0 ..< zone]
-        try:
-          discard parseIpAddress(candidate)
-          return candidate
-        except ValueError:
-          discard
-  except IOError, OSError:
-    discard
-  raise newException(DnsProtocolError, "No system DNS resolver is configured")
-
 proc hostsFileValues(hostname, recordType: string): seq[string] =
   if recordType notin ["A", "AAAA"]:
     return
@@ -251,7 +233,7 @@ proc hostsFileValues(hostname, recordType: string): seq[string] =
     chars = {'.'}, leading = false, trailing = true
   ).toLowerAscii()
   try:
-    for line in lines("/etc/hosts"):
+    for line in lines(hostsFilePath()):
       let content = line.split('#', maxsplit = 1)[0]
       let components = content.splitWhitespace()
       if components.len < 2:
@@ -296,7 +278,8 @@ proc missingExpectedValues(recordType: string, expectedValues,
 
 proc checkDns*(hostname: string, recordType: string = "A",
                expectedValues: seq[string] = @[], resolver: string = "",
-               timeoutMs: int = 5000): CheckResult =
+               timeoutMs: int = 5000,
+               resolverProvider: DnsResolverProvider = nil): CheckResult =
   ## Query a bounded DNS resolver operation and require every configured
   ## expected value. Additional answers are allowed.
   let startTime = getMonoTime()
@@ -323,18 +306,21 @@ proc checkDns*(hostname: string, recordType: string = "A",
           discard
 
     if values.len == 0:
-      let resolverHost =
-        if configuredResolver.host.len > 0: configuredResolver.host
-        else: systemResolver()
+      let selectedResolver =
+        if configuredResolver.host.len > 0: configuredResolver
+        elif resolverProvider != nil: resolverProvider()
+        else: systemDnsResolver()
+      if selectedResolver.host.len == 0:
+        raise newException(DnsProtocolError, "No system DNS resolver is configured")
       let queryId = newQueryId()
       let query = buildDnsQuery(target, normalizedType, queryId)
       let deadline = startTime + initDuration(milliseconds = timeoutMs)
       let udpResponse = udpDnsQuery(
-        query, resolverHost, configuredResolver.port, deadline
+        query, selectedResolver.host, selectedResolver.port, deadline
       )
       let response =
         if responseIsTruncated(udpResponse, queryId):
-          tcpDnsQuery(query, resolverHost, configuredResolver.port, deadline)
+          tcpDnsQuery(query, selectedResolver.host, selectedResolver.port, deadline)
         else:
           udpResponse
       values = parseDnsResponse(response, queryId, normalizedType)

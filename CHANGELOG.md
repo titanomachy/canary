@@ -14,6 +14,8 @@ All notable changes to Canary are documented in this file.
   for a full buffer or for the server to close its connection.
 - Drain stdout and stderr while commands run so large successful outputs do
   not fill the pipe and turn into false timeouts.
+- Discover default DNS servers from native Windows adapters, including IPv6,
+  and use the Windows hosts-file path instead of Linux-only configuration paths.
 
 ## [0.1.2] - 2026-08-31
 

@@ -131,8 +131,11 @@ Repeat `--expected` for every required answer; additional answers are allowed.
 CNAME and MX names compare case-insensitively without a trailing dot, IPv6
 addresses are canonicalized, and TXT values compare exactly.
 
-An empty `--resolver` uses the first nameserver in `/etc/resolv.conf`. An
-explicit resolver must be an IP literal with an optional port. Truncated UDP
+An empty `--resolver` uses the first nameserver in `/etc/resolv.conf` on Linux,
+or the first DNS server reported by an active Windows network adapter. The
+default path also checks the platform's hosts file for A and AAAA records;
+Windows uses `%SystemRoot%\System32\drivers\etc\hosts`. An explicit resolver
+must be an IP literal with an optional port. Truncated UDP
 responses retry over TCP within the same deadline.
 
 ## ICMP

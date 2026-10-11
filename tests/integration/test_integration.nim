@@ -1,7 +1,7 @@
 import nim_sqlite
 import std/[json, monotimes, net, options, os, osproc, streams, strutils,
             times, unittest]
-import ../../src/[common, notifier, process_runner]
+import ../../src/[common, notifier, process_runner, system_dns]
 import ../../src/checks/[dnscheck, httpcheck, sslcheck, tcpcheck, udpcheck]
 import ../test_support
 
@@ -331,6 +331,43 @@ suite "IPv6 loopback checks":
     server.waitForSuccess()
 
 suite "local DNS checks":
+  test "default resolver discovery reaches a local DNS server":
+    var server = startLocalServer("dns")
+    defer: server.stop()
+    var discovered = false
+    let provider: DnsResolverProvider = proc(): tuple[host: string, port: int] =
+      discovered = true
+      ("127.0.0.1", server.port)
+    let result = checkDns(
+      "fixture.test", expectedValues = @["192.0.2.10"],
+      timeoutMs = 1000, resolverProvider = provider
+    )
+    check discovered
+    check result.isOk
+    server.waitForSuccess()
+
+  test "explicit resolver overrides system discovery":
+    var server = startLocalServer("dns")
+    defer: server.stop()
+    var discovered = false
+    let provider: DnsResolverProvider = proc(): tuple[host: string, port: int] =
+      discovered = true
+      ("", 53)
+    let result = checkDns(
+      "fixture.test", resolver = "127.0.0.1:" & $server.port,
+      timeoutMs = 1000, resolverProvider = provider
+    )
+    check result.isOk
+    check not discovered
+    server.waitForSuccess()
+
+  test "missing system DNS configuration produces a completed DOWN check":
+    let provider: DnsResolverProvider = proc(): tuple[host: string, port: int] =
+      ("", 53)
+    let result = checkDns("fixture.test", resolverProvider = provider)
+    check not result.isOk
+    check result.details == "No system DNS resolver is configured"
+
   test "all supported record types are decoded through a chosen resolver":
     let cases = @[
       ("A", @["192.0.2.10", "192.0.2.11"]),

@@ -74,6 +74,8 @@ scenario and exits. Its modes provide:
 - server-first TCP banners, request/response probes, split short responses on
   persistent connections, and silent TCP timeouts;
 - local DNS answers for every supported record type;
+- default DNS discovery routed to a local resolver, explicit-resolver
+  precedence, and missing-system-configuration handling;
 - successful, delayed, and HTTP 503 webhook responses;
 - HTTP targets containing userinfo, query values, and fragments to verify output
   redaction.
@@ -110,3 +112,8 @@ HTTP, TCP, UDP, and generic webhook fixtures on kernel-assigned loopback ports,
 runs the documented Canary assertions, waits for clean fixture exits, and
 removes its private temporary directory. Like the other integration tests, it
 never contacts a public service.
+
+Windows compatibility tests also inspect DNS servers configured on native
+network adapters, including numeric IPv4/IPv6 validation, without contacting
+those servers. The default-resolver query itself uses an injected loopback
+fixture in the integration suite.

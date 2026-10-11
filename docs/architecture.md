@@ -44,6 +44,9 @@ canary/cli.nim  -- builds -->  CanaryConfig
 - `src/process_child.nim` owns helper-process groups, Windows Job Objects, and
   nonblocking output reads; `src/process_runner.nim` applies the execution and
   output-collection deadline.
+- `src/system_dns.nim` reads Linux resolver configuration or Windows adapter
+  DNS servers and selects the platform's hosts-file path. DNS tests can supply
+  a discovery provider to keep default-resolver queries on loopback.
 
 The adapter resolves configuration as built-in defaults, then TOML, then
 `CANARY_*` environment variables, then CLI options. It reads an explicit

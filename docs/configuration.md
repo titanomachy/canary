@@ -130,7 +130,8 @@ DNS `type` accepts `A`, `AAAA`, `CNAME`, `MX`, or `TXT`. `expected` is an array
 of required answers; extra answers do not fail the check. MX expectations use
 `priority hostname`, such as `10 mail.example.test`. `resolver` accepts an IP
 literal with an optional port (`192.0.2.53:5353` or `[2001:db8::53]:5353`); an
-empty value uses the first nameserver in `/etc/resolv.conf`. The DNS timeout
+empty value uses the first nameserver in `/etc/resolv.conf` on Linux or a DNS
+server from an active Windows network adapter. The DNS timeout
 bounds the whole UDP query and any TCP retry needed for a truncated response.
 
 For TCP, `request` is optional and is transmitted verbatim after connecting.

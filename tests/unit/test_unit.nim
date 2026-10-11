@@ -1,7 +1,7 @@
 import nim_sqlite
 import std/[httpcore, json, monotimes, net, options, os, strutils, times, unittest]
 import ../../src/[common, input_contract, network_target, notifier,
-                    process_runner]
+                    process_runner, system_dns]
 import ../../src/canary/[app, cli, config]
 import ../../src/checks/[commandcheck, dnscheck, http_timing, httpcheck,
                          icmpcheck, sslcheck]
@@ -21,6 +21,18 @@ proc readState(dbPath: string, jobId: string): tuple[status: string,
   )
 
 suite "input parsing and validation":
+  test "Linux resolver configuration selects the first valid nameserver":
+    check resolverFromConfig(
+      "# nameserver 192.0.2.1\nnameserver invalid\n" &
+      "nameserver 2001:db8::53 # preferred\nnameserver 192.0.2.53\n"
+    ) == "2001:db8::53"
+    check resolverFromConfig("nameserver fe80::53%2\n") == "fe80::53%2"
+    check resolverFromConfig("search example.test\n") == ""
+    when defined(windows):
+      check hostsFilePath().endsWith("System32" / "drivers" / "etc" / "hosts")
+    else:
+      check hostsFilePath() == "/etc/hosts"
+
   test "Windows HTTP timing names and recovery guidance are actionable":
     check "libcurl.dll" in WindowsCurlLibraryNames
     check "libcurl-x64.dll" in WindowsCurlLibraryNames
