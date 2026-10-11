@@ -35,11 +35,20 @@ proc receiveExpected(socket: Socket, expected: string,
                        matched: bool, bytesRead: int] =
   var response = ""
   while response.len < MaxTcpProbeBytes:
+    var readable = @[socket.getFd()]
+    let ready = selectRead(
+      readable, remainingMilliseconds(startTime, timeoutMs)
+    )
+    if ready == 0:
+      raise newException(TimeoutError, "TCP probe timed out")
+    if ready < 0:
+      raiseOSError(osLastError())
     var chunk = ""
+    # A timed recv tries to fill the requested size. Read only currently
+    # available bytes so short persistent banners can satisfy the assertion.
     let received = socket.recv(
       chunk,
-      min(TcpReadChunkBytes, MaxTcpProbeBytes - response.len),
-      remainingMilliseconds(startTime, timeoutMs)
+      min(TcpReadChunkBytes, MaxTcpProbeBytes - response.len)
     )
     if received == 0:
       break
@@ -58,7 +67,9 @@ proc connectBeforeDeadline(host: string, port: int, startTime: MonoTime,
   for endpoint in endpoints:
     var candidate: Socket
     try:
-      candidate = newSocket(endpoint.domain, SOCK_STREAM, IPPROTO_TCP)
+      candidate = newSocket(
+        endpoint.domain, SOCK_STREAM, IPPROTO_TCP, buffered = false
+      )
       candidate.connect(
         endpoint.address,
         Port(port),

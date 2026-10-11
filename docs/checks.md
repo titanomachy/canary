@@ -102,7 +102,9 @@ canary tcp 127.0.0.1 --port 9000 --request PING --expected PONG
 `--port` is required. Without `--request` or `--expected`, a successful
 connection is enough. A non-empty `--expected` reads until it finds the literal
 substring or the deadline expires; it can therefore inspect a server-first
-banner. A request is sent verbatim before reading. Requests, expectations, and
+banner. Matching succeeds as soon as the bytes arrive, including text split
+across multiple reads; the server can keep the connection open. A request is
+sent verbatim before reading. Requests, expectations, and
 buffered responses are limited to 65,536 bytes and are not logged.
 
 ## UDP

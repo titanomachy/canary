@@ -215,6 +215,22 @@ suite "local HTTP and UDP checks":
     check elapsed < 1000
 
 suite "local TCP checks":
+  test "short responses match while the server keeps the connection open":
+    for mode in ["tcp-banner", "tcp-request", "tcp-split"]:
+      var server = startLocalServer(
+        mode, ["--response=SSH-2.0-ready", "--expected-request=PING",
+               "--hold-ms=800"]
+      )
+      defer: server.stop()
+      let result = checkTcp(
+        "127.0.0.1", server.port, 300,
+        request = if mode == "tcp-request": "PING" else: "",
+        expected = "SSH-2.0-ready"
+      )
+      check result.isOk
+      check result.details.startsWith("Expected response received")
+      check result.latencyMs < 300
+
   test "a server-first banner can satisfy an expected response":
     var server = startLocalServer(
       "tcp-banner", ["--response=SSH-2.0-Canary fixture\r\n"]

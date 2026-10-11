@@ -114,7 +114,7 @@ proc serveUdp(response: string, ipv6: bool) =
   discard server.recvFrom(payload, 65_535, clientHost, clientPort)
   server.sendTo(clientHost, clientPort, response)
 
-proc serveTcp(mode, response, expectedRequest: string, delayMs: int,
+proc serveTcp(mode, response, expectedRequest: string, delayMs, holdMs: int,
               ipv6: bool) =
   let server = fixtureSocket(ipv6)
   defer: server.close()
@@ -139,10 +139,17 @@ proc serveTcp(mode, response, expectedRequest: string, delayMs: int,
     if delayMs > 0:
       sleep(delayMs)
     client.send(response)
+  of "tcp-split":
+    let midpoint = response.len div 2
+    client.send(response[0 ..< midpoint])
+    sleep(50)
+    client.send(response[midpoint .. ^1])
   of "tcp-silent":
     sleep(delayMs)
   else:
     discard
+  if holdMs > 0:
+    sleep(holdMs)
 
 proc addUint16(buffer: var string, value: int) =
   buffer.add(char((value shr 8) and 0xff))
@@ -270,15 +277,16 @@ proc serveHttps(certFile: string, keyFile: string, ipv6: bool) =
 proc usage() {.noreturn.} =
   stderr.writeLine(
     "usage: local_server <http-ok|http-json|http-missing|webhook-ok|" &
-    "webhook-fail|webhook-slow|http-redirect|tcp-banner|tcp-request|tcp-silent|" &
+    "webhook-fail|webhook-slow|http-redirect|tcp-banner|tcp-request|tcp-split|tcp-silent|" &
     "udp-echo|dns|tls|https-ok> [--delay-ms=N] [--response=TEXT] " &
-    "[--expected-request=TEXT] [--cert=PATH] [--key=PATH] [--ipv6]"
+    "[--hold-ms=N] [--expected-request=TEXT] [--cert=PATH] [--key=PATH] [--ipv6]"
   )
   quit(2)
 
 when isMainModule:
   var mode = ""
   var delayMs = 0
+  var holdMs = 0
   var response = "pong"
   var expectedRequest = "PING\r\n"
   var certFile = ""
@@ -294,6 +302,7 @@ when isMainModule:
     of cmdLongOption, cmdShortOption:
       case key
       of "delay-ms": delayMs = parseInt(value)
+      of "hold-ms": holdMs = parseInt(value)
       of "response": response = value
       of "expected-request": expectedRequest = value
       of "cert": certFile = value
@@ -305,8 +314,8 @@ when isMainModule:
 
   if mode == "udp-echo":
     serveUdp(response, ipv6)
-  elif mode in ["tcp-banner", "tcp-request", "tcp-silent"]:
-    serveTcp(mode, response, expectedRequest, delayMs, ipv6)
+  elif mode in ["tcp-banner", "tcp-request", "tcp-split", "tcp-silent"]:
+    serveTcp(mode, response, expectedRequest, delayMs, holdMs, ipv6)
   elif mode == "dns":
     serveDns(delayMs, ipv6)
   elif mode == "tls" and certFile.len > 0 and keyFile.len > 0:

@@ -10,6 +10,8 @@ All notable changes to Canary are documented in this file.
   timeout, and share one deadline across redirects in both HTTP transports.
 - Bound process shutdown and output collection, and terminate managed command
   descendants on timeout instead of waiting indefinitely after SIGTERM.
+- Match short TCP banners and split responses as bytes arrive, without waiting
+  for a full buffer or for the server to close its connection.
 
 ## [0.1.2] - 2026-08-31
 

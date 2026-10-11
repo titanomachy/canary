@@ -68,7 +68,8 @@ scenario and exits. Its modes provide:
   deadline in ordinary and timing modes, plus trusted and mismatched HTTPS
   certificate identities;
 - matching and mismatching UDP replies;
-- server-first TCP banners, request/response probes, and silent TCP timeouts;
+- server-first TCP banners, request/response probes, split short responses on
+  persistent connections, and silent TCP timeouts;
 - local DNS answers for every supported record type;
 - successful, delayed, and HTTP 503 webhook responses;
 - HTTP targets containing userinfo, query values, and fragments to verify output
