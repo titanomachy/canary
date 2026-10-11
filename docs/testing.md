@@ -40,6 +40,9 @@ command values and URL secrets are absent from formatted output and state IDs.
 The `process_worker` fixture exercises ignored SIGTERM, waiting children, and
 children holding output pipes after their parent exits. Tests require bounded
 return and verify that children cannot perform delayed work after timeout.
+The same fixture writes more than 2 MiB of combined stdout/stderr to verify
+complete collection and matching at the end of a large response. A continuously
+writing command verifies that draining output cannot extend its deadline.
 
 Each state test creates its own temporary SQLite database. The state table
 exercises these paths:

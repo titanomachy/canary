@@ -749,6 +749,32 @@ suite "argument-safe system checks":
     check "stdout;literal\"" in execution.output
     check "stderr value" in execution.output
 
+  test "large combined output cannot block a healthy command":
+    let execution = runProcess(
+      ProcessWorkerBinary, @["large-output"], timeoutMs = 3000
+    )
+    check not execution.timedOut
+    check execution.exitCode == 0
+    check execution.output.count('x') == 256 * 4096
+    check execution.output.count('y') == 256 * 4096
+    check "stderr-complete" in execution.output
+    let result = checkCommand(
+      ProcessWorkerBinary, @["large-output"], 3000,
+      outputMatch = "stderr-complete"
+    )
+    check result.isOk
+    check "stderr-complete" notin result.details
+
+  test "continuous command output cannot extend the deadline":
+    let started = getMonoTime()
+    let execution = runProcess(
+      ProcessWorkerBinary, @["continuous-output"], timeoutMs = 150
+    )
+    check execution.timedOut
+    check execution.exitCode == 137
+    check (getMonoTime() - started).inMilliseconds < 700
+    check execution.output.len > 4096
+
   test "ICMP passes the host as one argv element without a shell":
     var called = false
     let runner: ProcessRunner = proc(command: string, args: seq[string],

@@ -1,4 +1,4 @@
-import std/[os, osproc]
+import std/[monotimes, os, osproc, strutils, times]
 when defined(posix):
   import std/posix
 
@@ -25,5 +25,18 @@ of "wait-child", "orphan-child":
 of "echo":
   stdout.write(arguments[1])
   stderr.write(arguments[2])
+of "large-output":
+  for chunk in 0 ..< 256:
+    stdout.write(repeat('x', 4096))
+    stderr.write(repeat('y', 4096))
+    stdout.flushFile()
+    stderr.flushFile()
+  stderr.write("stderr-complete")
+of "continuous-output":
+  let started = getMonoTime()
+  let chunk = repeat('x', 4096)
+  while (getMonoTime() - started).inMilliseconds < 1200:
+    stdout.write(chunk)
+    stdout.flushFile()
 else:
   quit(2)

@@ -159,6 +159,8 @@ executable or arguments. `--exitCode` defaults to `0` and accepts 0 through
 255. `--outputMatch` is a case-sensitive literal substring in combined stdout
 and stderr. A timeout always fails, regardless of termination status. A command
 must finish and close its inherited output pipes within the timeout.
+Output is collected while the command runs, so a large response does not block
+the child on a full pipe. Output collection shares the command deadline.
 Canary terminates its process tree on timeout, including children left behind
 by an exited parent. Linux uses an isolated process group and Windows uses a
 Job Object. Programs must not deliberately detach from the managed group.

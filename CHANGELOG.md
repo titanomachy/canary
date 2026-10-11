@@ -12,6 +12,8 @@ All notable changes to Canary are documented in this file.
   descendants on timeout instead of waiting indefinitely after SIGTERM.
 - Match short TCP banners and split responses as bytes arrive, without waiting
   for a full buffer or for the server to close its connection.
+- Drain stdout and stderr while commands run so large successful outputs do
+  not fill the pipe and turn into false timeouts.
 
 ## [0.1.2] - 2026-08-31
 

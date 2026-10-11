@@ -20,24 +20,24 @@ proc runProcess*(command: string, args: seq[string], input: string = "",
 
   process.sendInput(input)
 
-  while process.running() and
-      (getMonoTime() - started).inMilliseconds < timeoutMs:
-    sleep(5)
-  if process.running():
-    result.timedOut = true
-    process.killTree()
-    # Keep the established cross-platform timeout status instead of exposing
-    # the platform-specific termination code (Windows commonly reports zero).
-    result.exitCode = 137
-  else:
-    result.exitCode = process.exitCode()
-    while (getMonoTime() - started).inMilliseconds < timeoutMs:
+  var outputClosed = false
+  while (getMonoTime() - started).inMilliseconds < timeoutMs:
+    var received = 0
+    if not outputClosed:
+      # Drain while the child runs: waiting for exit first lets a full pipe
+      # block a healthy command. Reads remain bounded by the same deadline.
       let chunk = process.readAvailable()
       result.output.add(chunk.data)
-      if chunk.eof:
-        return
-      if chunk.data.len == 0:
-        sleep(5)
-    result.timedOut = true
-    result.exitCode = 137
-    process.killTree()
+      received = chunk.data.len
+      outputClosed = chunk.eof
+    if not process.running() and outputClosed:
+      result.exitCode = process.exitCode()
+      return
+    if received == 0:
+      sleep(5)
+
+  result.timedOut = true
+  process.killTree()
+  # Keep the established cross-platform timeout status instead of exposing
+  # the platform-specific termination code (Windows commonly reports zero).
+  result.exitCode = 137
