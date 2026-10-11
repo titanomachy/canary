@@ -206,8 +206,7 @@ Linux-oriented.
 
 ## Limitations and security
 
-- Canary 0.1.x is Linux-only. TLS certificate inspection temporarily uses the
-  OpenSSL executable; ICMP uses `ping`.
+- TLS certificate inspection temporarily uses the OpenSSL executable; ICMP uses `ping`.
 - Canary is a single-run probe, not a scheduler, dashboard, or heartbeat
   receiver. Heartbeat/dead-man monitoring belongs in the orchestrator.
 - Notification delivery is at-least-once. A provider can receive a duplicate
