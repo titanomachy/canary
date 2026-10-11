@@ -4,6 +4,15 @@ All notable changes to Canary are documented in this file.
 
 ## Unreleased
 
+## [0.1.3] - 2026-10-11
+
+### Added
+
+- Add native 64-bit Windows support and a Windows GitHub Actions job covering
+  builds, HTTP phase timing, PCRE assertions, TCP, UDP, DNS, ICMP, TLS, command
+  execution, SQLite state, documentation contracts, and package installation.
+- Support OpenSSL-backed certificate checks on Windows.
+
 ### Fixed
 
 - Bound ordinary HTTP connection and TLS negotiation with the configured
@@ -16,6 +25,16 @@ All notable changes to Canary are documented in this file.
   not fill the pipe and turn into false timeouts.
 - Discover default DNS servers from native Windows adapters, including IPv6,
   and use the Windows hosts-file path instead of Linux-only configuration paths.
+- Probe common Windows libcurl DLL names beside `canary.exe` and on `PATH` for
+  HTTP timing mode, and return actionable installation guidance when no
+  compatible timing library can be loaded.
+- Detect command timeouts independently of Unix signal exit codes, and use the
+  native Windows `ping` argument format for ICMP checks.
+
+### Changed
+
+- Document Linux and 64-bit Windows support and the required Windows runtime
+  dependencies.
 
 ## [0.1.2] - 2026-08-31
 
@@ -24,18 +43,6 @@ All notable changes to Canary are documented in this file.
 - Use a literal package version in `canary.nimble`, as required by Nimble's
   metadata parser, and verify that it stays synchronized with the CLI version.
 - Install and document the PCRE runtime required by regular-expression checks.
-- Probe common Windows libcurl DLL names beside `canary.exe` and on `PATH` for
-  HTTP timing mode, and return actionable installation guidance when no
-  compatible timing library can be loaded.
-- Detect command timeouts independently of Unix signal exit codes, and use the
-  native Windows `ping` argument format for ICMP checks.
-
-### Added
-
-- Add a Windows GitHub Actions job with native coverage for builds, HTTP phase
-  timing, PCRE assertions, TCP, UDP, DNS, ICMP, TLS, command execution, SQLite
-  state, and documentation contracts.
-- Support OpenSSL-backed certificate checks on Windows.
 
 ## [0.1.1] - 2026-08-31
 

@@ -2,7 +2,7 @@
 
 # Keep this literal in sync with CanaryVersion in src/canary_contract.nim.
 # Nimble metadata readers reject computed version assignments.
-version       = "0.1.2"
+version       = "0.1.3"
 author        = "titanomachy"
 description   = "A lightweight, standalone service health and uptime monitoring tool."
 license       = "MIT"

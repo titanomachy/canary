@@ -73,6 +73,22 @@ the reason behind non-obvious transaction decisions. Avoid narrating obvious
 control flow. Public output is a compatibility surface; add fields rather than
 silently renaming existing JSON fields.
 
+## Release workflow
+
+1. Update the literal version in `canary.nimble` and `CanaryVersion` in
+   `src/canary_contract.nim` together.
+2. Move unreleased changes into a dated version section in `CHANGELOG.md`,
+   keeping an empty `Unreleased` section for subsequent work.
+3. Run `nimble checkAll` and `git diff --check`, commit the release changes,
+   and push them to `master`.
+4. Wait for both Linux and Windows GitHub Actions jobs to pass for that commit.
+5. Create an annotated `vVERSION` tag on the tested commit and push it. Publish
+   a GitHub release using that tag and the corresponding changelog section.
+
+Releases currently distribute source through GitHub's generated archives.
+Users build with Nimble and install the platform dependencies documented in
+the [README](../README.md#installation).
+
 ## Security review checklist
 
 - Does untrusted input ever reach a shell or command string?
