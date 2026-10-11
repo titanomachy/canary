@@ -38,6 +38,9 @@ canary/cli.nim  -- builds -->  CanaryConfig
 - `src/checks/http_timing.nim` is the opt-in in-process libcurl boundary. It
   performs the timed HTTP request, captures body and headers for the same
   assertions, and converts libcurl's cumulative counters into separate phases.
+- `src/checks/http_transport.nim` runs ordinary HTTP requests through Nim's
+  asynchronous client with one deadline for connection, TLS, redirects, and
+  response transfer. Each HTTPS hop verifies its certificate and host identity.
 
 The adapter resolves configuration as built-in defaults, then TOML, then
 `CANARY_*` environment variables, then CLI options. It reads an explicit

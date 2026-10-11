@@ -30,7 +30,9 @@ tools used by individual checks. CI builds both platforms with Nim 2.2.10.
 
 Optional HTTP phase timing uses the system libcurl shared library in process.
 The `curl` executable is not required. Ordinary HTTP checks continue to use
-Nim's HTTP client and do not require libcurl to perform a request.
+Nim's asynchronous HTTP client and do not require libcurl to perform a request.
+Both transports share one timeout across connection, TLS negotiation, redirects,
+and response transfer.
 
 On Windows, timing mode probes common libcurl DLL names both beside
 `canary.exe` and through the normal DLL search path. When no compatible DLL can

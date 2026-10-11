@@ -19,6 +19,33 @@ proc readState(dbPath: string, jobId: string): tuple[status: string,
   )
 
 suite "local HTTP and UDP checks":
+  test "HTTPS timeout bounds a stalled TLS handshake in both transports":
+    for timing in [false, true]:
+      var server = startLocalServer("tcp-silent", ["--delay-ms=700"])
+      defer: server.stop()
+      let started = getMonoTime()
+      let result = checkHttp(
+        "https://127.0.0.1:" & $server.port & "/health",
+        timeoutMs = 100, verboseTimings = timing
+      )
+      let elapsed = (getMonoTime() - started).inMilliseconds
+      check not result.isOk
+      check result.details == "Timeout"
+      check elapsed < 500
+
+  test "HTTP redirects share one timeout in both transports":
+    for timing in [false, true]:
+      var server = startLocalServer("http-redirect", ["--delay-ms=100"])
+      defer: server.stop()
+      let started = getMonoTime()
+      let result = checkHttp(
+        "http://127.0.0.1:" & $server.port & "/start",
+        timeoutMs = 150, verboseTimings = timing
+      )
+      check not result.isOk
+      check result.details == "Timeout"
+      check (getMonoTime() - started).inMilliseconds < 500
+
   test "HTTP success and body assertions use a random local port":
     var server = startLocalServer("http-ok")
     defer: server.stop()
@@ -442,6 +469,31 @@ suite "local TLS certificate check":
     check timedResult.httpTimings.totalMs >=
       timedResult.httpTimings.tlsHandshakeMs
     httpsServer.waitForSuccess()
+
+    let hadCertFile = existsEnv("SSL_CERT_FILE")
+    let oldCertFile = getEnv("SSL_CERT_FILE")
+    putEnv("SSL_CERT_FILE", certFile)
+    defer:
+      if hadCertFile: putEnv("SSL_CERT_FILE", oldCertFile)
+      else: delEnv("SSL_CERT_FILE")
+    var verifiedServer = startLocalServer(
+      "https-ok", ["--cert=" & certFile, "--key=" & keyFile]
+    )
+    defer: verifiedServer.stop()
+    check checkHttp(
+      "https://localhost:" & $verifiedServer.port, timeoutMs = 2000
+    ).isOk
+    verifiedServer.waitForSuccess()
+
+    var mismatchServer = startLocalServer(
+      "https-ok", ["--cert=" & certFile, "--key=" & keyFile]
+    )
+    defer: mismatchServer.stop()
+    let mismatch = checkHttp(
+      "https://127.0.0.1:" & $mismatchServer.port, timeoutMs = 2000
+    )
+    check not mismatch.isOk
+    check mismatch.details == "Request failed"
 
 suite "SQLite multiprocess concurrency":
   test "concurrent failures update one shared state row without lost writes":

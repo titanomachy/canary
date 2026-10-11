@@ -61,6 +61,9 @@ scenario and exits. Its modes provide:
 
 - successful, mismatching, delayed, and redirecting HTTP responses with phase
   timing;
+- stalled TLS handshakes and delayed redirects to verify the single HTTP
+  deadline in ordinary and timing modes, plus trusted and mismatched HTTPS
+  certificate identities;
 - matching and mismatching UDP replies;
 - server-first TCP banners, request/response probes, and silent TCP timeouts;
 - local DNS answers for every supported record type;

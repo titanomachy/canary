@@ -1,4 +1,4 @@
-import std/[dynlib, httpcore, math, os, strutils, uri]
+import std/[dynlib, httpcore, math, monotimes, os, strutils, times, uri]
 import ../common
 
 type
@@ -309,10 +309,16 @@ proc timedHttpRequest*(url, methodName, body: string, headers: HttpHeaders,
   var currentBody = body
   var currentHeaders = copyHeaders(headers)
   var timings: HttpPhaseTimings
+  let deadline = getMonoTime() + initDuration(milliseconds = timeoutMs)
 
   for redirectIndex in 0 .. maxRedirects:
+    let remaining = (deadline - getMonoTime()).inMilliseconds.int
+    if remaining <= 0:
+      result.succeeded = false
+      result.timedOut = true
+      return
     result = performTimedRequest(
-      $currentUrl, currentMethod, currentBody, currentHeaders, timeoutMs
+      $currentUrl, currentMethod, currentBody, currentHeaders, remaining
     )
     timings.addTimings(result.timings)
     result.timings = timings

@@ -64,7 +64,10 @@ All configured assertions must pass. `statusRange` accepts values such as
 scalar text; for example `replicas.0.healthy=true`.
 
 HTTP response time covers client setup, redirects, the complete response body,
-and local assertions. JSON includes both `response_time_ms` and the equal
+and local assertions. One timeout is shared by TCP connection, TLS negotiation,
+redirects, and response transfer in both transports. Ordinary requests use Nim's asynchronous
+HTTP client under that deadline; libcurl remains optional for phase timings.
+JSON includes both `response_time_ms` and the equal
 `latency_ms` compatibility field. Timing mode additionally returns
 `timings_ms.dns`, `tcp_connect`, `tls_handshake`, `ttfb`, `transfer`, and
 `total`. These transport phases are diagnostic; `--maxLatency` applies to the

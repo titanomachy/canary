@@ -71,7 +71,7 @@ proc serveHttp(mode: string, delayMs: int, ipv6: bool) =
                  "Connection: close\r\n\r\n" & body
   client.send(response)
 
-proc serveHttpRedirect(ipv6: bool) =
+proc serveHttpRedirect(ipv6: bool, delayMs: int) =
   let server = fixtureSocket(ipv6)
   defer: server.close()
   server.setSockOpt(OptReuseAddr, true)
@@ -82,6 +82,8 @@ proc serveHttpRedirect(ipv6: bool) =
   var firstClient: owned(Socket)
   server.accept(firstClient)
   discard readHttpRequest(firstClient)
+  if delayMs > 0:
+    sleep(delayMs)
   firstClient.send(
     "HTTP/1.1 302 Found\r\nLocation: /final\r\nContent-Length: 0\r\n" &
     "Connection: close\r\n\r\n"
@@ -92,6 +94,8 @@ proc serveHttpRedirect(ipv6: bool) =
   server.accept(secondClient)
   defer: secondClient.close()
   discard readHttpRequest(secondClient)
+  if delayMs > 0:
+    sleep(delayMs)
   let body = "fixture-ok"
   secondClient.send(
     "HTTP/1.1 200 OK\r\nContent-Type: text/plain\r\n" &
@@ -310,7 +314,7 @@ when isMainModule:
   elif mode == "https-ok" and certFile.len > 0 and keyFile.len > 0:
     serveHttps(certFile, keyFile, ipv6)
   elif mode == "http-redirect":
-    serveHttpRedirect(ipv6)
+    serveHttpRedirect(ipv6, delayMs)
   elif mode in [
     "http-ok", "http-json", "http-missing", "webhook-ok", "webhook-fail",
     "webhook-slow"

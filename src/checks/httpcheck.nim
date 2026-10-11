@@ -1,6 +1,7 @@
 import std/[httpclient, json, monotimes, net, re, strutils]
 import ../[common, input_contract]
 import http_timing
+import http_transport
 
 proc timingSummary(timings: HttpPhaseTimings): string =
   if not timings.available:
@@ -126,7 +127,6 @@ proc checkHttp*(url: string,
   )
   validateHttpHeaders(headers)
   let displayUrl = publicTarget(url)
-  var client: HttpClient
   var timings = HttpPhaseTimings(available: verboseTimings)
 
   try:
@@ -172,12 +172,9 @@ proc checkHttp*(url: string,
       responseHeaders = response.headers
       statusCode = response.statusCode
     else:
-      client = newHttpClient(
-        timeout = timeoutMs,
-        maxRedirects = maxRedirects,
-        headers = customHeaders
+      let response = boundedHttpRequest(
+        url, httpVerb, body, customHeaders, timeoutMs, maxRedirects
       )
-      let response = client.request(url, httpVerb, body)
       responseBody = response.body
       responseStatus = $response.status
       responseHeaders = response.headers
@@ -266,7 +263,7 @@ proc checkHttp*(url: string,
       displayUrl, getCurrentExceptionMsg(), startTime,
       getCurrentExceptionMsg(), timings
     )
-  except HttpRequestError, OSError, IOError, ValueError:
+  except HttpRequestError, SslError, OSError, IOError, ValueError:
     let responseTimeMs = elapsedMilliseconds(startTime)
     let msg = "HTTP ERROR - " & displayUrl &
       " - Request failed - Response time: " & $responseTimeMs & "ms" &
@@ -286,6 +283,3 @@ proc checkHttp*(url: string,
       latencyMs: responseTimeMs, details: "Unexpected client error",
       httpTimings: timings
     )
-  finally:
-    if client != nil:
-      client.close()

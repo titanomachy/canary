@@ -2,6 +2,13 @@
 
 All notable changes to Canary are documented in this file.
 
+## Unreleased
+
+### Fixed
+
+- Bound ordinary HTTP connection and TLS negotiation with the configured
+  timeout, and share one deadline across redirects in both HTTP transports.
+
 ## [0.1.2] - 2026-08-31
 
 ### Fixed
