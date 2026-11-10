@@ -1,7 +1,8 @@
 # Check reference
 
-Canary performs exactly one check per invocation. Every check returns a human
-message or one JSON object and exits with the shared contract documented in
+Canary checks one target per invocation, with sequential per-port probes when
+TCP, UDP, or SSL selects multiple ports. It returns human-readable results or
+one JSON object and exits with the shared contract documented in
 [`baseline-contract.md`](baseline-contract.md). Command help is the source of
 truth for accepted flags:
 
@@ -33,6 +34,35 @@ an assertion is a completed `DOWN` check and exits `1`.
 Every elapsed time uses a monotonic clock. For socket checks, `--timeout` is one
 deadline for resolution, connection, transmission, and response rather than a
 fresh timeout for each phase.
+
+## Multiple ports
+
+The `tcp`, `udp`, and `ssl` commands accept a port number or a comma-separated
+list with either `--port` or `-p`:
+
+```bash
+canary tcp mail.example.test --port 25,465
+canary udp service.example.test -p 9000,9001 --payload ping --expected pong
+canary ssl mail.example.test --port 465,993 --minDays 14
+```
+
+Ports run sequentially in the supplied order. Duplicates are checked once;
+whitespace around numbers is allowed inside a quoted value. Every entry must
+be between `1` and `65535`; empty entries and malformed values are rejected
+before any probe starts. Each port receives the configured assertions and its
+own check timeout. A failed port does not stop the remaining probes. Exit code
+`0` means every port passed; `1` means at least one port failed.
+
+Text output has one line per port. With multiple distinct ports, `--json`
+returns `{"status":"UP|DOWN","results":[...]}`, where the ordered results
+retain the existing per-check fields and optional notifications. SSL endpoints
+include their port in multi-port output. A single distinct port keeps the
+existing text and JSON shape, including selections such as `25,25`.
+
+State and notifications remain independent per port. Generated IDs already
+include the port. An explicit `--id mail` becomes `mail:25` and `mail:465` for
+a multi-port selection; each derived ID must fit the 128-character limit.
+Single-port explicit IDs remain unchanged.
 
 ## HTTP and HTTPS
 

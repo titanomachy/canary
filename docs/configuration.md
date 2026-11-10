@@ -111,6 +111,14 @@ structured fields and exact phase boundaries are defined in the
 Targets (`url` or `host`) are intentionally not loaded from TOML or the
 environment. Supply exactly one target after the command.
 
+For `[tcp]`, `[udp]`, and `[ssl]`, `port` accepts the existing integer form
+(`port = 25`) or a quoted comma-separated list (`port = "25,465"`).
+`CANARY_PORT=25,465` supplies the same list, and a CLI `--port` value replaces
+the entire lower-priority selection. Ports are deduplicated and checked
+sequentially; see [multiple ports](checks.md#multiple-ports) for output and
+per-port state identities. SSL still defaults to `443`; TCP and UDP require a
+port selection.
+
 IPv6 URL targets use bracket notation, for example
 `http://[2001:db8::10]:8080/health`. Host arguments accept a bare IPv6 literal
 or a bracketed one. Resolver values with a custom port must use brackets, such
@@ -157,7 +165,7 @@ Environment names use the `CANARY_` prefix and the uppercased option name:
 `CANARY_RETRIES`, `CANARY_RECOVERYTHRESHOLD`, `CANARY_COOLDOWN`,
 `CANARY_REPEATINTERVAL`, `CANARY_SILENCEUNTIL`, `CANARY_DB`, `CANARY_TIMEOUT`,
 `CANARY_STATUS`, `CANARY_STATUSRANGE`, `CANARY_MAXLATENCY`, `CANARY_VERBOSE`, `CANARY_NOTIFY`,
-`CANARY_REQUEST`, `CANARY_EXPECTED`, `CANARY_TYPE`, `CANARY_RESOLVER`,
+`CANARY_PORT`, `CANARY_REQUEST`, `CANARY_EXPECTED`, `CANARY_TYPE`, `CANARY_RESOLVER`,
 `CANARY_ARG`, `CANARY_EXITCODE`, `CANARY_OUTPUTMATCH`, and `CANARY_HEADERS`, for
 example. `CANARY_ARG` separates multiple command arguments with newlines.
 Camel-case

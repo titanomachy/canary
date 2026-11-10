@@ -161,6 +161,28 @@ suite "Windows compatibility":
     check result.stderr.len == 0
     server.waitForSuccess()
 
+    var firstTls = startLocalServer(
+      "tls", ["--cert=" & certFile, "--key=" & keyFile]
+    )
+    defer: firstTls.stop()
+    var secondTls = startLocalServer(
+      "tls", ["--cert=" & certFile, "--key=" & keyFile]
+    )
+    defer: secondTls.stop()
+    let multiple = runCanary([
+      "ssl", "localhost", "--port", $firstTls.port & "," & $secondTls.port,
+      "--minDays", "0", "--timeout", "2000", "--json"
+    ])
+    multiple.describe()
+    check multiple.exitCode == ExitUp
+    check multiple.stderr.len == 0
+    let multiPayload = parseJson(multiple.stdout)
+    require multiPayload["results"].len == 2
+    check multiPayload["results"][0]["target"].getStr() == "localhost:" & $firstTls.port
+    check multiPayload["results"][1]["target"].getStr() == "localhost:" & $secondTls.port
+    firstTls.waitForSuccess()
+    secondTls.waitForSuccess()
+
     let hadCertFile = existsEnv("SSL_CERT_FILE")
     let oldCertFile = getEnv("SSL_CERT_FILE")
     putEnv("SSL_CERT_FILE", certFile)
@@ -181,6 +203,27 @@ suite "Windows compatibility":
     check httpsResult.exitCode == ExitUp
     check httpsResult.stderr.len == 0
     httpsServer.waitForSuccess()
+
+  test "TCP and UDP accept sequential port lists on Windows":
+    for command in ["tcp", "udp"]:
+      let mode = if command == "tcp": "tcp-banner" else: "udp-echo"
+      var first = startLocalServer(mode, ["--response=ready"])
+      defer: first.stop()
+      var second = startLocalServer(mode, ["--response=ready"])
+      defer: second.stop()
+      let result = runCanary([
+        command, "127.0.0.1", "--port", $first.port & "," & $second.port,
+        "--expected", "ready", "--timeout", "1000", "--json"
+      ])
+      result.describe()
+      check result.exitCode == ExitUp
+      check result.stderr.len == 0
+      let payload = parseJson(result.stdout)
+      require payload["results"].len == 2
+      check payload["results"][0]["target"].getStr() == "127.0.0.1:" & $first.port
+      check payload["results"][1]["target"].getStr() == "127.0.0.1:" & $second.port
+      first.waitForSuccess()
+      second.waitForSuccess()
 
   test "SQLite state persists on Windows":
     let testDir = newTestDir("windows-state")

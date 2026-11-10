@@ -119,6 +119,16 @@ suite "input parsing and validation":
     expect CanaryConfigError:
       discard parseSilenceUntil("tomorrow evening")
 
+  test "port lists validate every entry and deduplicate in supplied order":
+    check parsePorts("25") == @[25]
+    check parsePorts("465, 25,465, 65535,1") == @[465, 25, 65535, 1]
+    for value in [
+      "", ",25", "25,", "25,,465", "25,nope", "25,0", "25,-1",
+      "25,65536", "25,4.65", "25,999999999999999999999999"
+    ]:
+      expect CanaryConfigError:
+        discard parsePorts(value)
+
   test "hostnames and expected DNS addresses are validated":
     for hostname in [
       "localhost", "service.example.test", "127.0.0.1", "::1", "[::1]"
@@ -435,6 +445,67 @@ suite "typed application configuration":
     check checkResult.kind == "tcp"
 
 suite "layered CLI configuration":
+  test "all port commands expand lists without changing probe options":
+    for command in ["tcp", "udp", "ssl"]:
+      let input = loadCliConfig(@[
+        command, "localhost", "-p", "465,25,465", "--timeout", "750",
+        "--id", "mail"
+      ])
+      let configs = input.toCanaryConfigs()
+      check configs.len == 2
+      check configs[0].common.checkId == "mail:465"
+      check configs[1].common.checkId == "mail:25"
+      check input.common.checkId == "mail"
+      for index, port in [465, 25]:
+        configs[index].validate()
+        case configs[index].kind
+        of ckTcp:
+          check configs[index].tcpConfig.port == port
+          check configs[index].tcpConfig.timeoutMs == 750
+        of ckUdp:
+          check configs[index].udpConfig.port == port
+          check configs[index].udpConfig.payload == "ping"
+        of ckSsl:
+          check configs[index].sslConfig.port == port
+          check configs[index].sslConfig.minDays == 14
+        else:
+          check false
+      expect CanaryConfigError:
+        discard input.toCanaryConfig()
+
+  test "single-port identities and the default SSL port remain unchanged":
+    for command in ["tcp", "udp", "ssl"]:
+      let config = loadCliConfig(@[
+        command, "localhost", "--port=25,25", "--id", "mail"
+      ]).toCanaryConfig()
+      check config.resolvedCheckId() == "mail"
+    check loadCliConfig(@["ssl", "localhost"]).toCanaryConfig().sslConfig.port == 443
+    expect CanaryConfigError:
+      discard loadCliConfig(@[
+        "tcp", "localhost", "--port", "25,465", "--id", "mail "
+      ]).toCanaryConfigs()
+
+  test "port lists retain scalar TOML compatibility and source precedence":
+    let hadPort = existsEnv("CANARY_PORT")
+    let oldPort = getEnv("CANARY_PORT")
+    delEnv("CANARY_PORT")
+    defer:
+      if hadPort: putEnv("CANARY_PORT", oldPort)
+      else: delEnv("CANARY_PORT")
+    let testDir = newTestDir("port-config")
+    defer: removeDir(testDir)
+    let configPath = testDir / "canary.toml"
+    for command in ["tcp", "udp", "ssl"]:
+      delEnv("CANARY_PORT")
+      writeFile(configPath, "[" & command & "]\nport = 25\n")
+      let args = @[command, "localhost", "--config", configPath]
+      check loadCliConfig(args).toCanaryConfigs().len == 1
+      writeFile(configPath, "[" & command & "]\nport = \"25,465\"\n")
+      check loadCliConfig(args).toCanaryConfigs().len == 2
+      putEnv("CANARY_PORT", "80,443,8080")
+      check loadCliConfig(args).toCanaryConfigs().len == 3
+      check loadCliConfig(args & @["--port", "9000"]).toCanaryConfigs().len == 1
+
   test "CLI overrides environment, which overrides TOML and built-ins":
     const EnvironmentKeys = [
       "CANARY_RETRIES", "CANARY_NOTIFY", "CANARY_HEADERS", "CANARY_STATUS",

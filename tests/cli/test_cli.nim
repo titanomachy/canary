@@ -1,7 +1,7 @@
 import nim_sqlite
-import std/[json, net, options, os, osproc, streams, strtabs, strutils, times,
-            unittest]
-import ../../src/canary_contract
+import std/[json, monotimes, nativesockets, net, options, os, osproc, streams,
+            strtabs, strutils, times, unittest]
+import ../../src/[canary_contract, process_runner]
 import ../test_support
 
 type CliResult = object
@@ -665,3 +665,207 @@ suite "Canary CLI compatibility contract":
       check db.one(
         "SELECT id FROM canary_state WHERE id = ?", checkId
       ).isSome
+
+suite "sequential multi-port checks":
+  test "TCP prints one line per unique port and aggregates failures":
+    let (reservation, closedPort) = reservedPort()
+    defer: reservation.close()
+    let (server, openPort) = listeningSocket()
+    defer: server.close()
+    let result = runCanary([
+      "tcp", "127.0.0.1", "--port", $closedPort & "," & $openPort &
+        "," & $closedPort, "--timeout", "500"
+    ])
+    result.describe()
+    check result.exitCode == ExitDown
+    check result.stderr.len == 0
+    let lines = result.stdout.strip().splitLines()
+    require lines.len == 2
+    check "TCP ERROR - 127.0.0.1:" & $closedPort in lines[0]
+    check "TCP OK - 127.0.0.1:" & $openPort in lines[1]
+
+  test "all successful ports yield UP and one ordered JSON object":
+    let (first, firstPort) = listeningSocket()
+    defer: first.close()
+    let (second, secondPort) = listeningSocket()
+    defer: second.close()
+    let result = runCanary([
+      "tcp", "127.0.0.1", "-p", $secondPort & "," & $firstPort, "--json"
+    ])
+    result.describe()
+    check result.exitCode == ExitUp
+    check result.stderr.len == 0
+    let payload = parseJson(result.stdout)
+    check payload["status"].getStr() == "UP"
+    require payload["results"].len == 2
+    check payload["results"][0]["target"].getStr() == "127.0.0.1:" & $secondPort
+    check payload["results"][1]["target"].getStr() == "127.0.0.1:" & $firstPort
+
+  test "TCP banner timeouts are sequential and apply separately to each port":
+    var first = startLocalServer("tcp-silent", ["--delay-ms=300"])
+    defer: first.stop()
+    var second = startLocalServer("tcp-silent", ["--delay-ms=300"])
+    defer: second.stop()
+    let started = getMonoTime()
+    let result = runCanary([
+      "tcp", "127.0.0.1", "--port=" & $first.port & "," & $second.port,
+      "--expected", "ready", "--timeout", "100", "--json"
+    ])
+    let elapsed = (getMonoTime() - started).inMilliseconds
+    result.describe()
+    check result.exitCode == ExitDown
+    check elapsed >= 180
+    let payload = parseJson(result.stdout)
+    require payload["results"].len == 2
+    for item in payload["results"]:
+      check item["details"].getStr() == "Timeout"
+
+  test "IPv6 multi-port results retain bracketed endpoints":
+    var first = startLocalServer("tcp-banner", ["--ipv6", "--response=ready"])
+    defer: first.stop()
+    var second = startLocalServer("tcp-banner", ["--ipv6", "--response=ready"])
+    defer: second.stop()
+    let result = runCanary([
+      "tcp", "::1", "--port", $first.port & "," & $second.port,
+      "--expected", "ready", "--timeout", "1000", "--json"
+    ])
+    result.describe()
+    check result.exitCode == ExitUp
+    let payload = parseJson(result.stdout)
+    require payload["results"].len == 2
+    check payload["results"][0]["target"].getStr() == "[::1]:" & $first.port
+    check payload["results"][1]["target"].getStr() == "[::1]:" & $second.port
+    first.waitForSuccess()
+    second.waitForSuccess()
+
+  test "UDP response assertions apply to every port and continue after failure":
+    var first = startLocalServer("udp-echo", ["--response=wrong"])
+    defer: first.stop()
+    var second = startLocalServer("udp-echo", ["--response=pong"])
+    defer: second.stop()
+    let result = runCanary([
+      "udp", "127.0.0.1", "--port", $first.port & "," & $second.port,
+      "--payload", "ping", "--expected", "pong", "--timeout", "1000", "--json"
+    ])
+    result.describe()
+    check result.exitCode == ExitDown
+    check result.stderr.len == 0
+    let payload = parseJson(result.stdout)
+    check payload["status"].getStr() == "DOWN"
+    require payload["results"].len == 2
+    check payload["results"][0]["status"].getStr() == "DOWN"
+    check payload["results"][1]["status"].getStr() == "UP"
+    check payload["results"][1]["target"].getStr() == "127.0.0.1:" & $second.port
+    first.waitForSuccess()
+    second.waitForSuccess()
+
+  test "SSL results identify each port in text and JSON and continue after failure":
+    let testDir = newTestDir("multi-port-tls")
+    defer: removeDir(testDir)
+    let certFile = testDir / "certificate.pem"
+    let keyFile = testDir / "key.pem"
+    let generation = runProcess(
+      "openssl", @[
+        "req", "-x509", "-newkey", "rsa:2048", "-nodes", "-sha256",
+        "-subj", "/CN=localhost", "-days", "2",
+        "-keyout", keyFile, "-out", certFile
+      ], timeoutMs = 5000
+    )
+    checkpoint(generation.output)
+    require generation.exitCode == 0
+    require not generation.timedOut
+    let (reservation, closedPort) = reservedPort()
+    defer: reservation.close()
+    for asJson in [false, true]:
+      var server = startLocalServer("tls", ["--cert=" & certFile, "--key=" & keyFile])
+      defer: server.stop()
+      var args = @[
+        "ssl", "127.0.0.1", "--port", $closedPort & "," & $server.port,
+        "--minDays", "0", "--timeout", "2000"
+      ]
+      if asJson: args.add("--json")
+      let result = runCanary(args)
+      result.describe()
+      check result.exitCode == ExitDown
+      check result.stderr.len == 0
+      if asJson:
+        let payload = parseJson(result.stdout)
+        require payload["results"].len == 2
+        check payload["results"][0]["status"].getStr() == "DOWN"
+        check payload["results"][1]["status"].getStr() == "UP"
+        check payload["results"][1]["target"].getStr() == "127.0.0.1:" & $server.port
+      else:
+        let lines = result.stdout.strip().splitLines()
+        require lines.len == 2
+        check "SSL ERROR - 127.0.0.1:" & $closedPort in lines[0]
+        check "SSL OK - 127.0.0.1:" & $server.port in lines[1]
+      server.waitForSuccess()
+
+  test "invalid later ports are rejected before probes or state updates":
+    let testDir = newTestDir("invalid-port-list")
+    defer: removeDir(testDir)
+    for command in ["tcp", "udp", "ssl"]:
+      let server = if command == "udp":
+        newSocket(AF_INET, SOCK_DGRAM, IPPROTO_UDP)
+      else:
+        newSocket()
+      defer: server.close()
+      server.bindAddr(Port(0), "127.0.0.1")
+      if command != "udp": server.listen()
+      let port = server.getLocalAddr()[1]
+      for suffix in [",0", ",65536", ",nope", ",", ",,465"]:
+        let dbPath = testDir / "state.db"
+        let result = runCanary([
+          command, "127.0.0.1", "--port", $port & suffix, "--db", dbPath
+        ])
+        result.describe()
+        check result.exitCode == ExitConfigError
+        check result.stdout.len == 0
+        check "port" in result.stderr.toLowerAscii()
+        check not fileExists(dbPath)
+        var readable = @[server.getFd()]
+        check selectRead(readable, 0) == 0
+
+  test "ports retain independent counters and outbox events with generated or explicit IDs":
+    for checkId in ["", "mail"]:
+      let testDir = newTestDir("port-state")
+      defer: removeDir(testDir)
+      let dbPath = testDir / "state.db"
+      let (reservation, closedPort) = reservedPort()
+      defer: reservation.close()
+      let (server, openPort) = listeningSocket()
+      defer: server.close()
+      var args = @[
+        "tcp", "127.0.0.1", "--port", $closedPort & "," & $openPort &
+          "," & $closedPort, "--db", dbPath, "--retries", "2", "--json",
+        "--notify", "mock://multi-port-secret"
+      ]
+      if checkId.len > 0: args.add(@["--id", checkId])
+      for _ in 0 ..< 2:
+        let result = runCanary(args)
+        result.describe()
+        check result.exitCode == ExitDown
+        check "multi-port-secret" notin result.stdout
+        check "multi-port-secret" notin result.stderr
+        let payload = parseJson(result.stdout)
+        check payload["results"].len == 2
+        check payload["results"][1]["notifications"].len == 0
+      let db = openDatabase(dbPath)
+      defer: db.close()
+      check db.all("SELECT id FROM canary_state").len == 2
+      let prefix = if checkId.len == 0: "tcp_127.0.0.1_" else: checkId & ":"
+      let failed = db.one(
+        "SELECT status, fail_count FROM canary_state WHERE id = ?", prefix & $closedPort
+      )
+      require failed.isSome
+      check failed.get()[0].fromDb(string) == "DOWN"
+      check failed.get()[1].fromDb(int) == 2
+      let healthy = db.one(
+        "SELECT status, fail_count FROM canary_state WHERE id = ?", prefix & $openPort
+      )
+      require healthy.isSome
+      check healthy.get()[0].fromDb(string) == "UP"
+      check healthy.get()[1].fromDb(int) == 0
+      let events = db.all("SELECT check_id FROM notification_outbox")
+      require events.len == 1
+      check events[0][0].fromDb(string) == prefix & $closedPort

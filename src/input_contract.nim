@@ -1,4 +1,4 @@
-import std/[net, re, strutils, uri]
+import std/[net, re, sets, strutils, uri]
 import common
 import network_target
 
@@ -37,6 +37,24 @@ proc validatePort*(port: int) =
   ## Validate a TCP or UDP port number.
   if port < 1 or port > 65535:
     configError("port must be between 1 and 65535")
+
+proc parsePorts*(value: string): seq[int] =
+  ## Validate the whole selection and preserve the first occurrence of each
+  ## port so duplicates cannot advance state more than once per invocation.
+  var seen = initHashSet[int]()
+  for part in value.split(','):
+    let token = part.strip()
+    if token.len == 0:
+      configError("port must be a number or a comma-separated list of numbers")
+    var port: int
+    try:
+      port = parseInt(token)
+    except ValueError:
+      configError("port must be a number or a comma-separated list of numbers")
+    validatePort(port)
+    if port notin seen:
+      seen.incl(port)
+      result.add(port)
 
 proc validateTcpProbe*(request, expected: string) =
   ## Bound operator-controlled probe data and the response buffer needed to

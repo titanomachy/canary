@@ -1,8 +1,8 @@
 # Canary
 
 Canary is a lightweight cross-platform health-check CLI written in Nim. A scheduler
-starts one process, Canary performs one HTTP, TLS, TCP, UDP, DNS, ICMP, or local
-command check, prints a result, and exits. It is stateless by default; SQLite
+starts one process, Canary checks one HTTP, TLS, TCP, UDP, DNS, ICMP, or local
+command target, prints results, and exits. It is stateless by default; SQLite
 state, failure/recovery thresholds, and durable notifications are opt-in.
 
 Canary is designed to pair with schedulers such as
@@ -74,6 +74,7 @@ canary ssl example.com --port 443 --minDays 30
 ```bash
 canary tcp example.com --port 443
 canary tcp mail.example.test --port 25 --expected '220 '
+canary tcp mail.example.test --port 25,465
 ```
 
 **UDP**
@@ -108,6 +109,10 @@ Every network check supports IPv6. Use bracket notation in URLs and in DNS
 resolver values that include a port. The complete option and assertion
 reference is in [docs/checks.md](docs/checks.md).
 
+TCP, UDP, and SSL accept comma-separated ports and check them sequentially in
+the supplied order. Every port must pass for exit code `0`. Multiple ports
+produce one line per port, or one JSON object with an ordered `results` array.
+
 ## State and notifications
 
 Without `--db`, `CANARY_DB`, `--notify`, or an explicit `--silenceUntil`
@@ -138,7 +143,7 @@ validation and execution:
 
 ```text
 built-in defaults ─┐
-TOML configuration ┼─→ CanaryConfig → validation → app.run(config)
+TOML configuration ┼─→ CanaryConfig[] → validation → app.run(configs)
 environment ────────┤
 CLI options ────────┘
 ```

@@ -4,6 +4,15 @@ All notable changes to Canary are documented in this file.
 
 ## Unreleased
 
+## [0.1.4] - 2026-11-10
+
+### Added
+
+- Accept comma-separated `--port` lists for TCP, UDP, and SSL, checked
+  sequentially with independent per-port state and notifications. Multi-port
+  JSON contains an aggregate status and ordered results; single-port output
+  remains compatible.
+
 ## [0.1.3] - 2026-10-11
 
 ### Added

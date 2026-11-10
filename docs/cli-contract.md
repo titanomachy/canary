@@ -52,6 +52,24 @@ substring; without a request it matches server-first banners. `--timeout`
 bounds the complete connect, send, and receive sequence. Omitting both values
 retains the established connect-only behavior.
 
+TCP, UDP, and SSL accept one port or a comma-separated list via `--port`/`-p`.
+Every entry is validated before execution, and duplicates are removed while
+preserving supplied order. Probes run sequentially with the configured timeout
+and assertions applied separately to each port, continuing after a completed
+`DOWN` result. SSL retains its default port `443`; TCP and UDP require a port.
+
+Multiple distinct ports produce one text line per endpoint or one JSON object
+with aggregate `status` (`UP` only when every port passes) and an ordered
+`results` array containing the existing per-check fields. SSL endpoints include
+their port in multi-port output. Exit codes are `0` when all pass and `1` when
+any completed probe fails; configuration/internal errors retain `2`/`3`.
+Single-port output, including duplicate-only lists, remains unchanged.
+
+Each port maintains independent state and notifications. For multi-port
+selections, explicit `--id NAME` derives `NAME:PORT` for each unique port;
+derived IDs must fit the existing 128-character limit. A single-port selection
+uses `NAME` unchanged. See [multiple ports](checks.md#multiple-ports).
+
 The local command shape is:
 
 ```text

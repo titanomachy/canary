@@ -2,7 +2,7 @@ import confutils
 import confutils/toml/defs
 import std/[os, strutils]
 import toml_serialization
-import ../[canary_contract, common, notifier]
+import ../[canary_contract, common, input_contract, notifier]
 import app, config
 
 type
@@ -131,8 +131,8 @@ type
       desc: "Minimum acceptable remaining validity in days" .}: int
     port* {.
       abbr: "p"
-      defaultValue: 443
-      desc: "SSL/TLS port" .}: int
+      defaultValue: "443"
+      desc: "SSL/TLS port or comma-separated ports (checked sequentially)" .}: string
     timeoutMs* {.
       name: "timeout"
       abbr: "t"
@@ -147,7 +147,7 @@ type
       desc: "Target hostname or IP address" .}: string
     port* {.
       abbr: "p"
-      desc: "TCP port number" .}: int
+      desc: "TCP port or comma-separated ports (checked sequentially)" .}: string
     request* {.
       defaultValue: ""
       desc: "Optional bytes to send after connecting" .}: string
@@ -168,7 +168,7 @@ type
       desc: "Target hostname or IP address" .}: string
     port* {.
       abbr: "p"
-      desc: "UDP port number" .}: int
+      desc: "UDP port or comma-separated ports (checked sequentially)" .}: string
     payload* {.
       defaultValue: "ping"
       desc: "Payload string to transmit" .}: string
@@ -387,7 +387,7 @@ proc requireTarget(target, missingMessage: string): string =
     raise newException(CanaryConfigError, missingMessage)
   target
 
-proc toCanaryConfig*(input: CliConfig): CanaryConfig =
+proc singleConfig(input: CliConfig, port: int = 0): CanaryConfig =
   let common = commonConfig(input.common)
   case input.command
   of CanaryCommand.http:
@@ -420,7 +420,7 @@ proc toCanaryConfig*(input: CliConfig): CanaryConfig =
       sslConfig: SslConfig(
         host: requireTarget(ssl.host, "no hostname specified"),
         minDays: ssl.minDays,
-        port: ssl.port,
+        port: port,
         timeoutMs: ssl.timeoutMs
       )
     )
@@ -431,7 +431,7 @@ proc toCanaryConfig*(input: CliConfig): CanaryConfig =
       common: common,
       tcpConfig: TcpConfig(
         host: requireTarget(tcp.host, "no host specified"),
-        port: tcp.port,
+        port: port,
         request: tcp.request,
         expected: tcp.expected,
         timeoutMs: tcp.timeoutMs
@@ -444,7 +444,7 @@ proc toCanaryConfig*(input: CliConfig): CanaryConfig =
       common: common,
       udpConfig: UdpConfig(
         host: requireTarget(udp.host, "no host specified"),
-        port: udp.port,
+        port: port,
         payload: udp.payload,
         expected: udp.expected,
         timeoutMs: udp.timeoutMs
@@ -489,6 +489,27 @@ proc toCanaryConfig*(input: CliConfig): CanaryConfig =
         outputMatch: command.outputMatch
       )
     )
+
+proc toCanaryConfigs*(input: CliConfig): seq[CanaryConfig] =
+  ## Keep the application model single-port; lists expand to ordinary checks.
+  validateCheckId(input.common.checkId)
+  let ports = case input.command
+    of CanaryCommand.ssl: parsePorts(input.sslOptions.port)
+    of CanaryCommand.tcp: parsePorts(input.tcpOptions.port)
+    of CanaryCommand.udp: parsePorts(input.udpOptions.port)
+    else: return @[singleConfig(input)]
+  for port in ports:
+    var config = singleConfig(input, port)
+    if ports.len > 1 and config.common.checkId.len > 0:
+      config.common.checkId.add(":" & $port)
+    result.add(config)
+
+proc toCanaryConfig*(input: CliConfig): CanaryConfig =
+  ## Retain the single-check adapter without silently dropping extra ports.
+  let configs = input.toCanaryConfigs()
+  if configs.len != 1:
+    raise newException(CanaryConfigError, "multiple ports require toCanaryConfigs")
+  configs[0]
 
 proc runNotificationTest(arguments: seq[string]): int =
   if arguments.len == 1 or arguments == @["notify", "--help"] or
@@ -565,7 +586,7 @@ proc runCli*(): int =
       runNotificationTest(arguments)
     else:
       let input = loadCliConfig(arguments)
-      run(input.toCanaryConfig())
+      run(input.toCanaryConfigs())
   except ConfigurationError:
     stderr.writeLine(parserDiagnostic(arguments))
     ExitConfigError

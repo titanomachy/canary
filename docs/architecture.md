@@ -1,8 +1,9 @@
 # Architecture
 
 Canary is a single-run health-check process. A scheduler starts one command,
-Canary performs one check, optionally records its state and sends a transition
-notification, then exits with the documented status code.
+Canary checks one target, optionally records state and sends transition
+notifications, then exits with the documented status code. TCP, UDP, and SSL
+port lists expand to single-port configurations executed sequentially.
 
 ## Application boundary
 
@@ -12,10 +13,10 @@ The implementation separates argument parsing from application behavior:
 process arguments
       |
       v
-canary/cli.nim  -- builds -->  CanaryConfig
+canary/cli.nim  -- builds -->  seq[CanaryConfig]
                                       |
                                       v
-                               app.run(config)
+                               app.run(configs)
                                       |
                  +--------------------+-------------------+
                  |                    |                   |
@@ -30,9 +31,10 @@ canary/cli.nim  -- builds -->  CanaryConfig
 - `src/canary/config.nim` defines `CanaryConfig`, `CommonConfig`, and the seven
   command-specific configurations. Validation operates on this model and does
   not depend on a parser.
-- `src/canary/app.nim` validates and executes a configuration, formats the
-  result, coordinates optional state and notifications, and returns an exit
-  code. It never terminates the process itself.
+- `src/canary/app.nim` validates every configuration before executing the
+  batch in order, formats results, coordinates optional per-port state and
+  notifications, and returns an aggregate exit code. The single-configuration
+  entrypoint remains available. It never terminates the process itself.
 - `src/checks/` contains the check implementations. These functions return a
   `CheckResult` and do not print or terminate the process.
 - `src/checks/http_timing.nim` is the opt-in in-process libcurl boundary. It
@@ -61,6 +63,9 @@ default Canary generates the legacy identity from the check type, public
 target, and port where applicable. URL credentials, queries, and fragments are
 not included.
 
+For multiple distinct ports, an explicit ID derives `NAME:PORT` per probe.
+Generated IDs and single-port explicit IDs retain their existing behavior.
+
 Use `--id NAME` to set an explicit identity. This is important when two checks
 use the same URL but assert different status codes, content, or headers:
 
@@ -80,11 +85,11 @@ changing it starts a new state history.
 
 ## Error and exit boundary
 
-Configuration validation happens before network access. `app.run(config)` maps
+Configuration validation happens before network access. `app.run(configs)` maps
 the result to the public exit-code contract:
 
-- `0`: completed check is `UP`;
-- `1`: completed check is `DOWN`;
+- `0`: every completed check is `UP`;
+- `1`: at least one completed check is `DOWN`;
 - `2`: invalid configuration;
 - `3`: unexpected internal failure.
 

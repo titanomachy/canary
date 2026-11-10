@@ -5,8 +5,9 @@ these contracts require tests and a changelog entry.
 
 ## Execution and state
 
-Canary executes one check and then exits. A default invocation is stateless: it
-does not create or update a database.
+Canary checks one target and then exits. TCP, UDP, and SSL can select multiple
+ports, which run sequentially with independent state and notifications. A
+default invocation is stateless: it does not create or update a database.
 
 State tracking is enabled explicitly by any of these inputs:
 
@@ -60,6 +61,11 @@ The detailed parser-independent compatibility matrix is defined in the
 Help and version requests exit with `0`. A remote timeout, refused connection,
 unexpected response, or failed assertion is a completed `DOWN` check, not an
 internal error.
+
+For multiple distinct ports, exit `0` requires every probe to pass; any failed
+probe yields `1`. Output is one text line per port or one JSON object with an
+aggregate `status` and ordered `results` array. Single-port output remains
+unchanged. See [multiple ports](checks.md#multiple-ports).
 
 ## Elapsed-time contract
 
