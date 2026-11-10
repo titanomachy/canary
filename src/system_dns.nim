@@ -1,4 +1,6 @@
-import std/[net, os, strutils]
+import std/[net, strutils]
+when defined(windows):
+  import std/os
 
 type DnsResolverProvider* = proc(): tuple[host: string, port: int] {.closure.}
 
